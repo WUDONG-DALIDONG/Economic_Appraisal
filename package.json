@@ -1,0 +1,20 @@
+{
+  "name": "economic-appraisal",
+  "private": true,
+  "version": "0.1.0",
+  "description": "通用配置化项目评价计算平台",
+  "scripts": {
+    "dev": "npx pnpm@8 --filter frontend dev",
+    "build": "npx pnpm@8 -r build",
+    "test": "npx pnpm@8 -r test",
+    "test:core": "npx pnpm@8 --filter core test",
+    "test:all": "npx pnpm@8 -r test",
+    "server": "npx pnpm@8 --filter backend dev",
+    "install:all": "npx pnpm@8 install"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.0",
+    "vitest": "^1.0.0",
+    "@types/node": "^20.0.0"
+  }
+}
