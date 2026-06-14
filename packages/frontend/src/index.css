@@ -1,0 +1,72 @@
+/* Global styles for TableExcelView */
+
+/* Table scroll container */
+.table-excel-view {
+  overflow: auto;
+  position: relative;
+}
+
+/* Column resize handle - active state */
+.col-resize-handle {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  cursor: col-resize;
+  background: transparent;
+  transition: background 0.15s;
+}
+
+.col-resize-handle:hover,
+.col-resize-handle.dragging {
+  background: #1976d2;
+}
+
+/* Construction period column highlight */
+.construction-col {
+  background-color: #f5f9ff;
+}
+
+.construction-col-header {
+  background-color: #e3f2fd;
+}
+
+/* Sticky columns base */
+.sticky-col {
+  position: sticky;
+  background: #fff;
+  z-index: 1;
+}
+
+.sticky-col-header {
+  position: sticky;
+  background: #fafafa;
+  z-index: 3;
+}
+
+/* Inline edit input style */
+.cell-edit-input {
+  width: 100%;
+  border: 1px solid #1976d2;
+  padding: 2px 4px;
+  font-size: 12px;
+  text-align: right;
+  outline: none;
+  box-sizing: border-box;
+}
+
+/* Prevent text selection during drag */
+.no-select {
+  user-select: none;
+}
+
+/* Tab button hover */
+.tab-btn {
+  transition: all 0.15s ease;
+}
+
+.tab-btn:hover {
+  color: #1976d2;
+  background: rgba(25, 118, 210, 0.04);
+}

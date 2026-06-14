@@ -1,0 +1,10 @@
+node_modules/
+packages/*/node_modules/
+packages/frontend/dist/
+data.db
+data.db-*
+backend.log
+.env
+.DS_Store
+.vite/
+package-lock.json

@@ -1,0 +1,167 @@
+import { TokenType, Token } from './interface';
+
+export { TokenType, type Token } from './interface';
+
+export function tokenize(formula: string): Token[] {
+  const tokens: Token[] = [];
+  let pos = 0;
+
+  const peek = () => formula[pos];
+  const advance = () => formula[pos++];
+  const isAtEnd = () => pos >= formula.length;
+
+  const addToken = (type: Token['type'], value: string, startPos: number) => {
+    tokens.push({ type, value, pos: startPos });
+  };
+
+  while (!isAtEnd()) {
+    const char = peek();
+
+    if (/\s/.test(char)) {
+      advance();
+      continue;
+    }
+
+    const start = pos;
+
+    // Multi-character operators first (== , !=, >=, <=)
+    if (char === '=' && formula[pos + 1] === '=') {
+      addToken(TokenType.Operator, '==', start); pos += 2; continue;
+    }
+    if (char === '!' && formula[pos + 1] === '=') {
+      addToken(TokenType.Operator, '!=', start); pos += 2; continue;
+    }
+    if (char === '>' && formula[pos + 1] === '=') {
+      addToken(TokenType.Operator, '>=', start); pos += 2; continue;
+    }
+    if (char === '<' && formula[pos + 1] === '=') {
+      addToken(TokenType.Operator, '<=', start); pos += 2; continue;
+    }
+
+    // Single character punctuation
+    if ('+-/^%(),.:;[]'.includes(char)) {
+      const tokType =
+        char === '(' ? TokenType.LParen :
+        char === ')' ? TokenType.RParen :
+        char === '[' ? TokenType.LBracket :
+        char === ']' ? TokenType.RBracket :
+        char === ',' ? TokenType.Comma :
+        char === ':' ? TokenType.Colon :
+        char === '.' ? TokenType.Dot :
+        char === ';' ? TokenType.Semicolon :
+        TokenType.Operator;
+      addToken(tokType, char, start);
+      advance();
+      continue;
+    }
+
+    // Comparison operators without = second char
+    if (char === '>' || char === '<') {
+      addToken(TokenType.Operator, char, start);
+      advance();
+      continue;
+    }
+
+    // Number
+    if (/\d/.test(char)) {
+      while (/\d/.test(peek())) advance();
+      if (peek() === '.') {
+        advance();
+        while (/\d/.test(peek())) advance();
+      }
+      addToken(TokenType.Number, formula.slice(start, pos), start);
+      continue;
+    }
+
+    // String literal
+    if (char === '"') {
+      advance(); // consume opening quote
+      while (!isAtEnd() && peek() !== '"') {
+        advance();
+      }
+      if (isAtEnd()) throw new Error(`Unterminated string at position ${start}`);
+      advance(); // consume closing quote
+      addToken(TokenType.String, formula.slice(start + 1, pos - 1), start);
+      continue;
+    }
+
+    // Wildcard temporarily (will be reclassified in post-processing)
+    if (char === '*') {
+      addToken(TokenType.Wildcard, '*', start);
+      advance();
+      continue;
+    }
+
+    // Equal sign
+    if (char === '=') {
+      addToken(TokenType.Operator, '=', start);
+      advance();
+      continue;
+    }
+
+    // Identifier / Table / Field name (includes Chinese characters)
+    if (/[a-zA-Z_\u4e00-\u9fa5]/.test(char)) {
+      while (!isAtEnd() && /[a-zA-Z0-9_\u4e00-\u9fa5]/.test(peek())) {
+        advance();
+      }
+      addToken(TokenType.Identifier, formula.slice(start, pos), start);
+      continue;
+    }
+
+    throw new Error(`Unexpected character '${char}' at position ${pos}`);
+  }
+
+  // =================== Post-processing ===================
+
+  // Step 1: * inside [...] -> Wildcard; otherwise -> Operator
+  for (let i = 0; i < tokens.length; i++) {
+    if (tokens[i].type === TokenType.Wildcard) {
+      let bracketDepth = 0;
+      for (let j = 0; j < i; j++) {
+        if (tokens[j].value === '[') bracketDepth++;
+        if (tokens[j].value === ']') bracketDepth--;
+      }
+      if (bracketDepth <= 0) {
+        tokens[i].type = TokenType.Operator;
+      }
+    }
+  }
+
+  // Step 2: preceded by . -> Field name
+  for (let i = 0; i < tokens.length; i++) {
+    if (tokens[i].type === TokenType.Identifier) {
+      const prev = tokens[i - 1];
+      if (prev && prev.value === '.') {
+        tokens[i].type = TokenType.Field;
+      }
+    }
+  }
+
+  // Step 3: followed by . -> Table name
+  //          or followed by [ and not preceded by . -> Table name
+  for (let i = 0; i < tokens.length; i++) {
+    if (tokens[i].type === TokenType.Identifier) {
+      const next = tokens[i + 1];
+      if (next && next.value === '.') {
+        tokens[i].type = TokenType.Table;
+      } else if (next && next.value === '[') {
+        const prev = tokens[i - 1];
+        if (!prev || prev.value !== '.') {
+          tokens[i].type = TokenType.Table;
+        }
+      }
+    }
+  }
+
+  // Step 4: true, false -> Boolean
+  for (let i = 0; i < tokens.length; i++) {
+    if (tokens[i].type === TokenType.Identifier) {
+      const val = tokens[i].value;
+      if (val === 'true' || val === 'false') {
+        tokens[i].type = TokenType.Boolean;
+      }
+    }
+  }
+
+  return tokens;
+}
