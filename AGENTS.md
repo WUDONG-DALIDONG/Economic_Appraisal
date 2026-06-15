@@ -14,8 +14,9 @@
 - [3] 公式分词器：`packages/core/src/formula/tokenizer.ts`（23 测试）
 - [4] AST 解析器：`packages/core/src/formula/parser.ts`（33 测试）
 - [5] DAG 引擎 + 依赖提取：`packages/core/src/dag/engine.ts`, `dependencyExtractor.ts`（8 测试）
-- [6] AST 解释器：`packages/core/src/formula/interpreter.ts`（24 测试）
+- [6] AST 解释器：`packages/core/src/formula/interpreter.ts`（27 测试）
 - [7] 财务函数：PMT/SLN/NPV/IRR/PAYBACK/POWER/IF，`packages/core/src/formula/financialFunctions.ts`（22 测试）
+- **时间偏移 `[t-1]`/`[t+1]`：`interpreter.ts` 支持 dynamic `timeExpression`；`tokenizer.ts` 支持 Number→Field 用于表码引用**
 
 ### 执行器（packages/executor）
 - [8] AST→JS 编译器：`packages/executor/src/compiler/ASTCompiler.ts`（13 测试）
@@ -35,7 +36,8 @@
   - `ModelRepository` 完整读写 `parameters.formula` 列
 - 导出 API 集成测试：`packages/backend/tests/exportApi.test.ts`（6 测试）
 - CRUD API 集成测试：`packages/backend/tests/api.test.ts`（5 测试）
-- **计算 API 集成测试：`packages/backend/tests/computeApi.test.ts`（5 测试）**
+- **计算 API 集成测试：`packages/backend/tests/computeApi.test.ts`（6 测试）**
+- **E2E 验证时间偏移：`cumsum-test` 模型验证 `合计[t-1] + 当年[t]` 累积求和**
 
 ### 前端（packages/frontend）
 - 骨架：React + Vite
@@ -56,10 +58,24 @@
 - 测试：`packages/frontend/tests/*.test.tsx`（9 测试）
 
 ## 总测试数
-**23 测试文件，270 测试通过**
+**25 测试文件，311 测试通过**
+
+## 语言偏好
+- **所有交流使用中文（简体）**，包括代码注释、commit message、文档更新。
+- 用户指令以中文为准。
+
+## v0.3 子级指标与编码体系 (已完成)
+- 编码引擎: `packages/core/src/utils/coding.ts` — `recomputeCodes` / `getCodeDepth` / `generateSummaryFormula` / `adjustIndentation` (20 测试)
+- 类型扩展: `CellDefinition` 新增 `code` / `parentId` / `sortOrder`
+- DB schema: `cells` 表新增 `code TEXT`, `parent_id TEXT`, `sort_order INTEGER`
+- 后端 CRUD: `ModelRepository` 读写新增字段，`findCellsByModel` 按 `sort_order` 排序
+- 计算层: `ComputeService.getCell()` / `getCellArray()` 增加 code fallback（先匹配 name，再匹配 code）
+- UI 改造: `TableExcelView` 新增
+  - 编码列 (sticky, 显示/折叠展开)
+  - 名称列层级缩进 (`(depth-1)*16px`)
+  - 缩进/反缩进按钮 (→ / ←)
+  - Σ 一键生成子级汇总公式
+  - 折叠展开 (▶/▼) 控制行可见性
 
 ## 当前阻塞
-- `.git` 目录报错缺失，提示 `fatal: not a git repository`。暂不影响开发。
-
-## 下一步（待规划）
-- v0.3 的需求确定：可视化图表、公式调试器（逐步计算）、模型版本管理、多用户协作等
+- (无)

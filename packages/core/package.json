@@ -4,6 +4,16 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./src/index.ts",
+      "types": "./src/index.ts"
+    },
+    "./src/*": {
+      "import": "./src/*",
+      "types": "./src/*"
+    }
+  },
   "scripts": {
     "build": "tsc",
     "test": "vitest run",

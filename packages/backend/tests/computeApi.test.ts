@@ -117,4 +117,94 @@ describe('Compute API', () => {
     expect(body.errors).toHaveLength(0);
     expect(body.cellCount).toBe(1);
   });
+
+  it('supports [t-1] time offset for cumulative calculations', async () => {
+    const model: ModelDefinition = {
+      id: 'cumsum-test',
+      name: '累积求和测试',
+      version: '1.0.0',
+      description: '',
+      tables: [{ id: 't4', name: '表4', order: 0 }],
+      cells: [
+        { id: 'a1', name: '当年值', code: '1', tableId: 't4', formula: '', type: CellType.Input, defaultValue: [10, 20, 30, 40], isArray: true },
+        { id: 'a2', name: '累计值', code: '2', tableId: 't4', formula: '=表4.1[t-1] + 表4.1', type: CellType.Formula, isArray: true },
+      ],
+      parameters: [],
+      timeline: { constructionYears: 0, operationYears: 4, startYear: 2024, startMonth: 1 },
+      metadata: { author: '', createdAt: '', updatedAt: '' },
+    };
+    const createRes = await app.inject({ method: 'POST', url: '/api/models', payload: model });
+    expect(createRes.statusCode).toBe(200);
+
+    const res = await app.inject({ method: 'POST', url: '/api/models/cumsum-test/compute' });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.errors).toHaveLength(0);
+
+    // 累计值[t] = 当年值[t-1] + 当年值[t]
+    // t=0: 当年值[-1] → 越界返回0; 当年值[0] = 10; 累计 = 0+10 = 10
+    // t=1: 当年值[0] = 10; 当年值[1] = 20; 累计 = 30
+    // t=2: 当年值[1] = 20; 当年值[2] = 30; 累计 = 50
+    // t=3: 当年值[2] = 30; 当年值[3] = 40; 累计 = 70
+    const a2Results = body.results.filter((r: any) => r.cellId === 'a2').sort((a: any, b: any) => a.timeIndex - b.timeIndex);
+    expect(a2Results).toHaveLength(4);
+    expect(a2Results[0].value).toBe(10);
+    expect(a2Results[1].value).toBe(30);
+    expect(a2Results[2].value).toBe(50);
+    expect(a2Results[3].value).toBe(70);
+  });
+
+  it('scope controls cell computation and cross-cell references', async () => {
+    // construction=2 years (t=0,1), operation=3 years (t=2,3,4)
+    const model: ModelDefinition = {
+      id: 'scope-test',
+      name: '作用区间测试',
+      version: '1.0.0',
+      description: '',
+      tables: [{ id: 'st', name: '资金表', order: 0 }],
+      cells: [
+        // 建设期 Input，只在 t=0,1 有值
+        {
+          id: 'c-base', name: '建设投资', code: '1', tableId: 'st',
+          formula: '', type: CellType.Input,
+          defaultValue: [100, 200], scope: 'construction',
+          isArray: true
+        },
+        // 运营期 Formula，引用了建设期 Input，公式在 t=2,3,4 计算
+        {
+          id: 'c-op', name: '运营费用', code: '2', tableId: 'st',
+          formula: '=资金表.1 + 10', type: CellType.Formula,
+          scope: 'operation', isArray: true
+        },
+      ],
+      parameters: [],
+      timeline: { constructionYears: 2, operationYears: 3, startYear: 2024, startMonth: 1 },
+      metadata: { author: '', createdAt: '', updatedAt: '' },
+    };
+    const createRes = await app.inject({ method: 'POST', url: '/api/models', payload: model });
+    expect(createRes.statusCode).toBe(200);
+
+    const res = await app.inject({ method: 'POST', url: '/api/models/scope-test/compute' });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.errors).toHaveLength(0);
+
+    // 建设投资 (scope='construction') direct id refs: t=0,1 -> defaultValue; t=2,3,4 -> scope blocks -> 0
+    const baseResults = body.results.filter((r: any) => r.cellId === 'c-base').sort((a: any, b: any) => a.timeIndex - b.timeIndex);
+    // Note: c-base is Input, so it is NOT in the main compute loop (Formulas only).
+    // Its values come from getCell() when referenced by other cells, or defaultValue directly.
+    // We verify both via c-op results.
+
+    // 运营费用 (scope='operation') at t=0,1: should be 0 (main loop scope skip)
+    //                           at t=2,3,4: gets c-base 
+    //                           but c-base at t=2,3,4 is scope-blocked in getCell -> returns 0
+    //                           so c-op = 0 + 10 = 10
+    const opResults = body.results.filter((r: any) => r.cellId === 'c-op').sort((a: any, b: any) => a.timeIndex - b.timeIndex);
+    expect(opResults).toHaveLength(5);
+    expect(opResults[0].value).toBe(0);  // t=0: operation formula skipped
+    expect(opResults[1].value).toBe(0);  // t=1: operation formula skipped
+    expect(opResults[2].value).toBe(10); // t=2: 0 (c-base blocked) + 10
+    expect(opResults[3].value).toBe(10); // t=3
+    expect(opResults[4].value).toBe(10); // t=4
+  });
 });

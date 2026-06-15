@@ -1,11 +1,11 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { TableDefinition } from '@economic/core';
+import { TableDefinition, CellType } from '@economic/core';
 
 interface TableNavigatorProps {
   tables: TableDefinition[];
   activeId: string | null;
   onSelect: (id: string) => void;
-  onAdd: (table: TableDefinition) => void;
+  onAdd: (table: TableDefinition, defaultCell: { id: string; tableId: string; name: string; formula: string; type: CellType; isArray: boolean; unit: string; sortOrder: number; parentId: null }) => void;
   onRename: (id: string, name: string) => void;
   onDelete: (id: string) => void;
 }
@@ -44,11 +44,22 @@ export const TableNavigator: React.FC<TableNavigatorProps> = ({
   };
 
   const handleAdd = () => {
-    const id = `table-${Date.now()}`;
+    const tableId = `table-${Date.now()}`;
     const name = nextTableName();
-    onAdd({ id, name, order: tables.length });
+    const defaultCell = {
+      id: `cell-${Date.now()}`,
+      tableId,
+      name: '新指标',
+      formula: '',
+      type: CellType.Input,
+      isArray: true,
+      unit: '',
+      sortOrder: 0,
+      parentId: null as null,
+    };
+    onAdd({ id: tableId, name, order: tables.length }, defaultCell);
     // Auto-enter edit mode on next tick so the DOM input exists
-    setTimeout(() => startEditing(id), 0);
+    setTimeout(() => startEditing(tableId), 0);
   };
 
   return (

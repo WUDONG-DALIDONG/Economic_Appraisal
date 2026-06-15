@@ -215,15 +215,51 @@ describe('Interpreter - 标识符 t', () => {
       isConstruction: false, isOperation: true,
       constructionYears: 0, operationYears: 10, totalYears: 10,
     };
+    const ctx = makeContext({}, timeCtx);
+    expect(evaluate(parse('t + 1'), ctx)).toBe(6);
+    expect(evaluate(parse('t * 2'), ctx)).toBe(10);
+  });
+
+  it('evaluates cell reference with [t-1] time offset', () => {
     const values: Record<string, Record<number, CellValue>> = {
       '表1.A': { 4: 100, 5: 200, 6: 300 },
     };
+    const timeCtx: TimeContext = {
+      absoluteYear: 2024, relativeYear: 5,
+      isConstruction: false, isOperation: true,
+      constructionYears: 0, operationYears: 10, totalYears: 10,
+    };
     const ctx = makeContext(values, timeCtx);
-    // t-1 should evaluate to relativeYear - 1 = 4
-    // But we need to test this with a proper timeExpression cell ref
-    // For now, test arithmetic with t
-    expect(evaluate(parse('t + 1'), ctx)).toBe(6);
-    expect(evaluate(parse('t * 2'), ctx)).toBe(10);
+    const ast = parse('表1.A[t-1]');
+    expect(evaluate(ast, ctx)).toBe(100);
+  });
+
+  it('evaluates cell reference with [t+1] time offset', () => {
+    const values: Record<string, Record<number, CellValue>> = {
+      '表1.A': { 4: 100, 5: 200, 6: 300 },
+    };
+    const timeCtx: TimeContext = {
+      absoluteYear: 2024, relativeYear: 5,
+      isConstruction: false, isOperation: true,
+      constructionYears: 0, operationYears: 10, totalYears: 10,
+    };
+    const ctx = makeContext(values, timeCtx);
+    const ast = parse('表1.A[t+1]');
+    expect(evaluate(ast, ctx)).toBe(300);
+  });
+
+  it('evaluates cell reference with [t] (shorthand for current time)', () => {
+    const values: Record<string, Record<number, CellValue>> = {
+      '表1.A': { 4: 100, 5: 200, 6: 300 },
+    };
+    const timeCtx: TimeContext = {
+      absoluteYear: 2024, relativeYear: 5,
+      isConstruction: false, isOperation: true,
+      constructionYears: 0, operationYears: 10, totalYears: 10,
+    };
+    const ctx = makeContext(values, timeCtx);
+    const ast = parse('表1.A[t]');
+    expect(evaluate(ast, ctx)).toBe(200);
   });
 });
 

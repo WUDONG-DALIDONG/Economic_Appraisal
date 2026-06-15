@@ -2,26 +2,42 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import Database from 'better-sqlite3';
 import { fileURLToPath } from 'url';
-import { resolve, join } from 'path';
+import { resolve, join, dirname } from 'path';
 import { readFileSync, existsSync } from 'fs';
 import { initSchema } from './repository/initDb.js';
+import { migrateParameterHierarchy } from './migration/parameterHierarchy.js';
 import { registerExportRoute } from './routes/export.js';
 import { seedData } from './seed.js';
+import { backupDb } from './backup.js';
 
 const PORT = Number(process.env.PORT || 3001);
-const DB_PATH = process.env.DB_PATH || ':memory:';
+
+// Default to file DB in repo root so data persists across restarts
+const REPO_ROOT = dirname(fileURLToPath(import.meta.url));
+const DB_PATH = process.env.DB_PATH || resolve(REPO_ROOT, '../../../../data.db');
 
 // Path to built frontend static files (monorepo: repo-root/packages/frontend/dist)
 const FRONTEND_DIST = resolve(fileURLToPath(import.meta.url), '../../../frontend/dist');
 
 export async function buildServer(dbPath = DB_PATH, shouldSeed = false) {
+  // Backup existing DB before any operations
+  backupDb(dbPath);
+
   const db = new Database(dbPath);
   db.pragma('journal_mode = WAL');
   initSchema(db);
+  migrateParameterHierarchy(db);
 
   // If using :memory:, seed some demo data so the export works out of the box
   if (shouldSeed && dbPath === ':memory:') {
     seedData(db);
+  }
+
+  // Seed demo model on first run when file DB is empty
+  const { count } = db.prepare('SELECT COUNT(*) AS count FROM models').get() as { count: number };
+  if (dbPath !== ':memory:' && count === 0) {
+    seedData(db);
+    console.log('[seed] seeded demo model on fresh file DB');
   }
 
   const app = Fastify({ logger: { level: 'warn' } });

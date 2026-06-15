@@ -1,9 +1,9 @@
 import React, { useReducer, useEffect, useCallback } from 'react';
-import { ModelDefinition, renameTableInFormula, renameParamInFormula, extractTableReferences } from '@economic/core';
+import { ModelDefinition, renameTableInFormula, renameParamInFormula, extractTableReferences, ParameterType, CellType } from '@economic/core';
 import { workspaceReducer, initialState } from '../types/workspace.js';
 import { api } from '../hooks/useApi.js';
 import { ModelListPanel } from '../components/ModelListPanel.js';
-import { ParameterEditor } from './ParameterEditor.js';
+import { ParameterTreeEditor } from './ParameterTreeEditor.js';
 import { TimelineEditor } from './TimelineEditor.js';
 import { TableNavigator } from '../components/TableNavigator.js';
 import { TableExcelView } from './TableExcelView.js';
@@ -44,7 +44,17 @@ export const ModelWorkspace: React.FC = () => {
       description: '',
       tables: [],
       cells: [],
-      parameters: [],
+      parameters: [
+        {
+          id: `p-${Date.now()}`,
+          name: '新参数',
+          type: ParameterType.Number,
+          defaultValue: 0,
+          sortOrder: 0,
+          parentId: null,
+          formula: '',
+        },
+      ],
       timeline: { constructionYears: 1, operationYears: 10, startYear: 2024 },
       metadata: { author: '', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
     };
@@ -177,7 +187,7 @@ export const ModelWorkspace: React.FC = () => {
             <div style={{ marginBottom: 16, borderBottom: '1px solid #ddd' }}>
               {(
                 [
-                  { key: 'basic' as const, label: '基本信息' },
+                  { key: 'basic' as const, label: '全局参数' },
                   { key: 'table' as const, label: '表设计' },
                   { key: 'result' as const, label: '校验结果' },
                 ] as const
@@ -208,29 +218,26 @@ export const ModelWorkspace: React.FC = () => {
             {/* Tab Content */}
             {state.activeWorkspaceTab === 'basic' && (
               <>
-                <ParameterEditor
+                <ParameterTreeEditor
+                  model={state.currentModel}
                   parameters={state.currentModel.parameters}
                   onChange={(params) => updateModel((m) => ({ ...m, parameters: params }))}
-                  onRename={(oldName, newName) => {
+                  onRename={(oldName, newName, paramId) => {
                     const m = state.currentModel!;
                     if (oldName === newName) return;
-                    // Uniqueness check vs other parameters
-                    if (m.parameters.some((p) => p.name === newName)) {
+                    if (m.parameters.some((p) => p.name === newName && p.id !== paramId)) {
                       alert(`参数名 "${newName}" 已存在`);
                       return;
                     }
-                    // Uniqueness check vs table names (namespace overlap)
                     if (m.tables.some((t) => t.name === newName)) {
                       alert(`名称 "${newName}" 已被表使用，不能与表同名`);
                       return;
                     }
-                    // Sync all cell formulas referencing 参数.oldName
                     const cells = m.cells.map((c) => {
                       if (!c.formula || c.formula === '') return c;
                       const updated = renameParamInFormula(c.formula, oldName, newName);
                       return updated === c.formula ? c : { ...c, formula: updated };
                     });
-                    // Sync parameter formulas referencing 参数.oldName
                     const parameters = m.parameters.map((p) => {
                       if (!p.formula || p.formula === '') return p;
                       const updated = renameParamInFormula(p.formula, oldName, newName);
@@ -243,8 +250,7 @@ export const ModelWorkspace: React.FC = () => {
                   timeline={state.currentModel.timeline}
                   onChange={(tl) => updateModel((m) => ({ ...m, timeline: tl }))}
                 />
-              </>
-            )}
+              </>)}
 
             {state.activeWorkspaceTab === 'table' && (
               <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 240px)' }}>
@@ -252,9 +258,10 @@ export const ModelWorkspace: React.FC = () => {
                   tables={state.currentModel.tables}
                   activeId={state.activeTableId}
                   onSelect={(id) => dispatch({ type: 'SET_ACTIVE_TABLE', tableId: id })}
-                  onAdd={(table) => {
+                  onAdd={(table, defaultCell) => {
                     const tables = [...state.currentModel!.tables, table];
-                    dispatch({ type: 'UPDATE_MODEL', model: { ...state.currentModel!, tables } });
+                    const cells = [...state.currentModel!.cells, defaultCell];
+                    dispatch({ type: 'UPDATE_MODEL', model: { ...state.currentModel!, tables, cells } });
                     dispatch({ type: 'SET_ACTIVE_TABLE', tableId: table.id });
                   }}
                   onRename={(id, newName) => {

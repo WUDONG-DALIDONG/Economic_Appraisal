@@ -3,6 +3,8 @@ packages/*/node_modules/
 packages/frontend/dist/
 data.db
 data.db-*
+backups/
+docs/
 backend.log
 .env
 .DS_Store

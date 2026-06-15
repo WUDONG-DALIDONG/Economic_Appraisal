@@ -40,9 +40,13 @@ export function evaluate(node: ASTNode, ctx: EvalContext): CellValue {
       }
 
       let timeIndex: number;
-      if (node.timeRange && typeof node.timeRange === 'object') {
+      if (node.timeExpression) {
+        const evaluated = evaluate(node.timeExpression, ctx);
+        if (typeof evaluated !== 'number') return null;
+        timeIndex = evaluated;
+      } else if (node.timeRange && typeof node.timeRange === 'object') {
         if (node.timeRange.start === node.timeRange.end) {
-          // Single index like [t]
+          // Single index like [0] or [1]
           timeIndex = node.timeRange.start;
         } else {
           // Range [1:5]
@@ -53,7 +57,7 @@ export function evaluate(node: ASTNode, ctx: EvalContext): CellValue {
           return results;
         }
       } else {
-        timeIndex = ctx.timeContext.relativeYear + node.timeShift;
+        timeIndex = ctx.timeContext.relativeYear;
       }
 
       return ctx.getCellValue(node.table, node.field, timeIndex);

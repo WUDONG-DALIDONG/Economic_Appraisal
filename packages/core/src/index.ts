@@ -6,4 +6,5 @@ export * from './formula/parser';
 export * from './formula/renameToken';
 export * from './dag/engine';
 export * from './dag/dependencyExtractor';
-export * from './formula/interpreter';
+export * from './utils/coding';
+export * from './utils/formulaTransforms';

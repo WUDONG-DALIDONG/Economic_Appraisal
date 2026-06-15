@@ -137,6 +137,16 @@ export function tokenize(formula: string): Token[] {
     }
   }
 
+  // Step 2b: preceded by . -> Field name (for Numbers used as cell codes like 表4.1)
+  for (let i = 0; i < tokens.length; i++) {
+    if (tokens[i].type === TokenType.Number) {
+      const prev = tokens[i - 1];
+      if (prev && prev.value === '.') {
+        tokens[i].type = TokenType.Field;
+      }
+    }
+  }
+
   // Step 3: followed by . -> Table name
   //          or followed by [ and not preceded by . -> Table name
   for (let i = 0; i < tokens.length; i++) {

@@ -103,6 +103,9 @@ export enum CellType {
 export interface CellDefinition {
   id: string;
   name: string;
+  code?: string;          // 层级编码 (e.g. "1", "1.2", "1.2.3")
+  parentId?: string | null; // null = 顶级
+  sortOrder?: number;
   tableId: string;
   formula: string;
   type: CellType;
@@ -140,9 +143,12 @@ export enum ParameterType {
 export interface ParameterDefinition {
   id: string;
   name: string;
+  code?: string;               // 层级编码 (e.g. "1", "1.2")
+  parentId?: string | null;    // null = 顶级参数
+  sortOrder?: number;
   type: ParameterType;
   defaultValue: CellValue;
-  formula?: string;     // ← 新增：派生参数公式，若设置则通过公式计算值
+  formula?: string;            // 派生参数公式
   min?: number;
   max?: number;
   unit?: string;

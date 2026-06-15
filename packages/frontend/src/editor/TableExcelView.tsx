@@ -1,7 +1,8 @@
 import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
-import { ModelDefinition, CellDefinition, CellType } from '@economic/core';
+import { ModelDefinition, CellDefinition, CellType, recomputeCodes, getCodeDepth, generateSummaryFormula } from '@economic/core';
 import { generateTimelineColumns, TimelineColumn } from '../utils/timelineColumns.js';
 import { FormulaEditor } from '../components/FormulaEditor.js';
+import { FormulaEditModal } from '../components/FormulaEditModal.js';
 
 interface TableExcelViewProps {
   model: ModelDefinition;
@@ -13,7 +14,24 @@ interface TableExcelViewProps {
 type ViewMode = 'formula' | 'value';
 
 const DEFAULT_COL_WIDTH = 100;
-const FIXED_COL_WIDTH = 120;
+
+// Fixed column widths (left to right)
+const CODE_COL_WIDTH = 80;
+const NAME_COL_WIDTH = 120;
+const ACTION_COL_WIDTH = 120;
+const TYPE_COL_WIDTH = 80;
+const UNIT_COL_WIDTH = 60;
+const FORMULA_COL_WIDTH = 80;
+const SCOPE_COL_WIDTH = 80;
+
+// Sticky left positions
+const CODE_LEFT = 0;
+const NAME_LEFT = CODE_COL_WIDTH;
+const ACTION_LEFT = NAME_LEFT + NAME_COL_WIDTH;
+const TYPE_LEFT = ACTION_LEFT + ACTION_COL_WIDTH;
+const UNIT_LEFT = TYPE_LEFT + TYPE_COL_WIDTH;
+const FORMULA_LEFT = UNIT_LEFT + UNIT_COL_WIDTH;
+const SCOPE_LEFT = FORMULA_LEFT + FORMULA_COL_WIDTH;
 
 export const TableExcelView: React.FC<TableExcelViewProps> = ({
   model,
@@ -21,10 +39,12 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
   computeResult,
   onCellsChange,
 }) => {
-  const cells = model.cells.filter((c) => c.tableId === activeTableId);
+  const tableCells = model.cells.filter((c) => c.tableId === activeTableId);
   const columns = generateTimelineColumns(model.timeline);
 
   const [viewMode, setViewMode] = useState<ViewMode>('formula');
+  const [collapsedCodes, setCollapsedCodes] = useState<Set<string>>(new Set());
+  const [editingFormulaCellId, setEditingFormulaCellId] = useState<string | null>(null);
 
   // Auto-switch to value view when a new compute result arrives
   useEffect(() => {
@@ -72,14 +92,159 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
     });
   }, [columns.length]);
 
+  // Recompute codes for table cells and sort depth-first
+  const cellsWithCodes = useMemo(() => {
+    const codeMap = recomputeCodes(
+      tableCells.map((c, i) => ({
+        id: c.id,
+        parentId: c.parentId ?? null,
+        sortOrder: c.sortOrder ?? i,
+      }))
+    );
+    const otherCells = model.cells.filter((c) => c.tableId !== activeTableId);
+    const updatedTableCells = tableCells.map((c) => ({
+      ...c,
+      code: codeMap.get(c.id) || c.code || '',
+    }));
+    // Sort depth-first by code (numeric comparison at each level)
+    updatedTableCells.sort((a, b) => compareCode(a.code || '', b.code || ''));
+    return [...otherCells, ...updatedTableCells];
+  }, [tableCells, activeTableId, model.cells]);
+
+  // Visible cells: filter out children of collapsed parents
+  const displayCells = useMemo(() => {
+    const tableRows = cellsWithCodes.filter((c) => c.tableId === activeTableId);
+    const visible: CellDefinition[] = [];
+    for (const cell of tableRows) {
+      if (!cell.code) {
+        visible.push(cell);
+        continue;
+      }
+      // Check if any ancestor is collapsed
+      const parts = cell.code.split('.');
+      let isHidden = false;
+      for (let i = 1; i < parts.length; i++) {
+        const ancestorCode = parts.slice(0, i).join('.');
+        if (collapsedCodes.has(ancestorCode)) {
+          isHidden = true;
+          break;
+        }
+      }
+      if (!isHidden) visible.push(cell);
+    }
+    return visible;
+  }, [cellsWithCodes, activeTableId, collapsedCodes]);
+
   const updateCell = (cellId: string, updates: Partial<CellDefinition>) => {
-    const next = model.cells.map((c) =>
+    const next = cellsWithCodes.map((c) =>
       c.id === cellId ? { ...c, ...updates } : c
     );
     onCellsChange(next);
   };
 
-  const addCell = () => {
+  const removeCell = (cellId: string) => {
+    const tableRows = cellsWithCodes.filter((c) => c.tableId === activeTableId);
+    const otherRows = cellsWithCodes.filter((c) => c.tableId !== activeTableId);
+    const fam = buildFamilies();
+    const toRemove = getDescendants(fam, cellId);
+    const removeSet = new Set([cellId, ...toRemove]);
+    const target = fam.get(cellId);
+    const newParentId = target ? target.parentId : null;
+
+    const updatedRows = tableRows
+      .filter((c) => !removeSet.has(c.id))
+      .map((c) =>
+        removeSet.has(c.parentId ?? '') ? { ...c, parentId: newParentId } : c
+      );
+    onCellsChange([...otherRows, ...updatedRows]);
+  };
+
+  const moveUpCell = (cellId: string) => {
+    const tableRows = [...cellsWithCodes.filter((c) => c.tableId === activeTableId)];
+    const otherRows = cellsWithCodes.filter((c) => c.tableId !== activeTableId);
+    const idx = tableRows.findIndex((c) => c.id === cellId);
+    if (idx <= 0) return;
+
+    const prev = tableRows[idx - 1];
+    const target = tableRows[idx];
+    const targetSiblings = tableRows.filter((c) => c.parentId === target.parentId);
+    const prevIndexInSiblings = targetSiblings.findIndex((c) => c.id === prev.id);
+    if (prevIndexInSiblings === -1) return;
+
+    const prevOriginalSo = prev.sortOrder ?? 0;
+    const targetOriginalSo = target.sortOrder ?? 0;
+    const newSo = prevOriginalSo;
+    const newSoPrev = targetOriginalSo;
+
+    const prevDesc = getDescendants(buildFamilies(), prev.id);
+    const targetDesc = getDescendants(buildFamilies(), target.id);
+
+    const updatedRows = tableRows.map((c) => {
+      if (c.id === target.id || targetDesc.includes(c.id)) {
+        return { ...c, sortOrder: newSo + (c.sortOrder ?? 0) - targetOriginalSo };
+      }
+      if (c.id === prev.id || prevDesc.includes(c.id)) {
+        return { ...c, sortOrder: newSoPrev + (c.sortOrder ?? 0) - prevOriginalSo };
+      }
+      return c;
+    });
+
+    onCellsChange([...otherRows, ...updatedRows]);
+  };
+
+  const moveDownCell = (cellId: string) => {
+    const tableRows = [...cellsWithCodes.filter((c) => c.tableId === activeTableId)];
+    const otherRows = cellsWithCodes.filter((c) => c.tableId !== activeTableId);
+    const idx = tableRows.findIndex((c) => c.id === cellId);
+    if (idx < 0 || idx >= tableRows.length - 1) return;
+
+    const next = tableRows[idx + 1];
+    const target = tableRows[idx];
+    const targetSiblings = tableRows.filter((c) => c.parentId === target.parentId);
+    const nextIndexInSiblings = targetSiblings.findIndex((c) => c.id === next.id);
+    if (nextIndexInSiblings === -1) return;
+
+    const nextOriginalSo = next.sortOrder ?? 0;
+    const targetOriginalSo = target.sortOrder ?? 0;
+    const newSo = nextOriginalSo;
+    const newSoNext = targetOriginalSo;
+
+    const nextDesc = getDescendants(buildFamilies(), next.id);
+    const targetDesc = getDescendants(buildFamilies(), target.id);
+
+    const updatedRows = tableRows.map((c) => {
+      if (c.id === target.id || targetDesc.includes(c.id)) {
+        return { ...c, sortOrder: newSo + (c.sortOrder ?? 0) - targetOriginalSo };
+      }
+      if (c.id === next.id || nextDesc.includes(c.id)) {
+        return { ...c, sortOrder: newSoNext + (c.sortOrder ?? 0) - nextOriginalSo };
+      }
+      return c;
+    });
+
+    onCellsChange([...otherRows, ...updatedRows]);
+  };
+
+  const insertCellAt = (cellId: string) => {
+    const tableRows = [...cellsWithCodes.filter((c) => c.tableId === activeTableId)];
+    const otherRows = cellsWithCodes.filter((c) => c.tableId !== activeTableId);
+
+    const target = tableRows.find((c) => c.id === cellId);
+    if (!target) return;
+    const parentId = target.parentId;
+    const siblings = tableRows.filter((c) => c.parentId === parentId);
+    const targetIdx = siblings.findIndex((c) => c.id === cellId);
+
+    const targetSo = target.sortOrder ?? 0;
+    const newSo = targetIdx < siblings.length - 1
+      ? (targetSo + (siblings[targetIdx + 1].sortOrder ?? targetSo + 1)) / 2
+      : targetSo + 1;
+
+    const targetDesc = getDescendants(buildFamilies(), target.id);
+    const refSo = targetDesc.length > 0
+      ? Math.max(...targetDesc.map((id) => (tableRows.find((c) => c.id === id)?.sortOrder ?? -Infinity)))
+      : targetSo;
+
     const newCell: CellDefinition = {
       id: `cell-${Date.now()}`,
       name: '新指标',
@@ -88,62 +253,178 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
       type: CellType.Input,
       isArray: true,
       unit: '',
+      sortOrder: newSo,
+      parentId,
     };
-    onCellsChange([...model.cells, newCell]);
+
+    const updatedRows = [...tableRows];
+    const insertIdx = updatedRows.findIndex((c) => c.id === cellId) + targetDesc.length + 1;
+    updatedRows.splice(insertIdx, 0, newCell);
+
+    onCellsChange([...otherRows, ...updatedRows]);
   };
 
-  const removeCell = (cellId: string) => {
-    onCellsChange(model.cells.filter((c) => c.id !== cellId));
+  const indentCell = (cellId: string) => {
+    const tableRows = cellsWithCodes.filter((c) => c.tableId === activeTableId);
+    const otherRows = cellsWithCodes.filter((c) => c.tableId !== activeTableId);
+
+    const idx = tableRows.findIndex((c) => c.id === cellId);
+    if (idx <= 0) return;
+
+    const target = tableRows[idx];
+    const prev = tableRows[idx - 1];
+
+    if (target.parentId === prev.id) return;
+    if (prev.code && target.code && prev.code.startsWith(target.code + '.')) return;
+
+    const newParentId = prev.id;
+    const updatedRows = tableRows.map((c) =>
+      c.id === cellId ? { ...c, parentId: newParentId } : c
+    );
+    onCellsChange([...otherRows, ...updatedRows]);
   };
 
-  const getCellDisplayValue = (cell: CellDefinition, col: TimelineColumn): string => {
-    // Check scope: if cell.scope constrains the column period, show blank
+  const outdentCell = (cellId: string) => {
+    const tableRows = cellsWithCodes.filter((c) => c.tableId === activeTableId);
+    const otherRows = cellsWithCodes.filter((c) => c.tableId !== activeTableId);
+
+    const target = tableRows.find((c) => c.id === cellId);
+    if (!target || target.parentId === null) return;
+
+    const parent = tableRows.find((c) => c.id === target.parentId);
+    const newParentId = parent?.parentId ?? null;
+
+    const updatedRows = tableRows.map((c) =>
+      c.id === cellId ? { ...c, parentId: newParentId } : c
+    );
+    onCellsChange([...otherRows, ...updatedRows]);
+  };
+
+  const generateSummary = (cellId: string) => {
+    const tableRows = cellsWithCodes.filter((c) => c.tableId === activeTableId);
+    const target = tableRows.find((c) => c.id === cellId);
+    if (!target || !target.code) return;
+
+    const children = tableRows.filter(
+      (c) => c.parentId === cellId && c.code && c.code.startsWith(target.code + '.')
+    );
+    if (children.length === 0) return;
+
+    const childCodes = children.map((c) => c.code!);
+    const formula = generateSummaryFormula(childCodes);
+    updateCell(cellId, { formula, type: CellType.Formula });
+  };
+
+  // Build sibling family map
+  const buildFamilies = (): Map<string, { parentId: string | null; children: string[] }> => {
+    const tableRows = cellsWithCodes.filter((c) => c.tableId === activeTableId);
+    const fam = new Map<string, { parentId: string | null; children: string[] }>();
+    for (const row of tableRows) {
+      fam.set(row.id, { parentId: row.parentId ?? null, children: [] });
+    }
+    for (const row of tableRows) {
+      if (row.parentId != null) {
+        const p = fam.get(row.parentId);
+        if (p) p.children.push(row.id);
+      } else {
+        const p = fam.get('__root__') ?? { parentId: null, children: [] };
+        fam.set('__root__', p);
+        p.children.push(row.id);
+      }
+    }
+    return fam;
+  };
+
+  // Get all descendants (recursive) of a cell
+  const getDescendants = (fam: Map<string, { parentId: string | null; children: string[] }>, id: string): string[] => {
+    const node = fam.get(id);
+    if (!node) return [];
+    const result: string[] = [];
+    for (const child of node.children) {
+      result.push(child);
+      result.push(...getDescendants(fam, child));
+    }
+    return result;
+  };
+
+  const toggleCollapse = (code: string) => {
+    setCollapsedCodes((prev) => {
+      const next = new Set(prev);
+      if (next.has(code)) next.delete(code);
+      else next.add(code);
+      return next;
+    });
+  };
+
+  const hasChildren = (cellId: string): boolean => {
+    const tableRows = cellsWithCodes.filter((c) => c.tableId === activeTableId);
+    return tableRows.some((c) => c.parentId === cellId);
+  };
+
+  const isCollapsed = (code: string): boolean => collapsedCodes.has(code);
+
+  /**
+   * getCellDisplayValue: 获取单元格展示值
+   * 关键修改: 公式只显示在公式列，时间列不重复显示公式文本
+   */
+  const getCellDisplayValue = (
+    cell: CellDefinition,
+    col: TimelineColumn,
+    colContext: 'formula-column' | 'timeline'
+  ): string => {
+    // 作用区间过滤
     if (cell.scope && cell.scope !== 'both') {
       if (cell.scope === 'construction' && col.period === 'operation') return '';
       if (cell.scope === 'operation' && col.period === 'construction') return '';
     }
 
-    // In value view, try to show computed result from API
-    if (viewMode === 'value') {
-      const resultVal = resultMap.get(`${cell.id}:${col.index}`);
-      if (resultVal !== undefined) {
-        return resultVal === null ? '' : String(resultVal);
+    // 如果是 Formula 类型，公式文本只在“公式”列显示，时间列永远空白
+    if (cell.type === CellType.Formula || cell.type === CellType.Script) {
+      if (colContext === 'formula-column') {
+        return cell.formula || '';
       }
-      // Fallback: Input type default values
-      if (cell.type === CellType.Input) {
-        const arr = Array.isArray(cell.defaultValue) ? cell.defaultValue : [];
-        const val = arr[col.index] ?? '';
-        return String(val);
+      // timeline 列: Formula 类型永远返回空（不重复显示公式文本）
+      if (colContext === 'timeline') {
+        // value 模式下尝试显示计算结果
+        if (viewMode === 'value') {
+          const resultVal = resultMap.get(`${cell.id}:${col.index}`);
+          return resultVal !== undefined && resultVal !== null ? String(resultVal) : '';
+        }
+        return '';
       }
-      return '';
     }
 
-    // Formula view (default)
-    if (cell.type === CellType.Formula || cell.type === CellType.Script) {
-      return cell.formula || '';
+    // Input 类型
+    if (cell.type === CellType.Input) {
+      const arr = Array.isArray(cell.defaultValue) ? cell.defaultValue : [];
+      const val = arr[col.index] ?? '';
+      return val !== undefined && val !== null ? String(val) : '';
     }
-    // Input type: always treat as array across timeline columns
-    const arr = Array.isArray(cell.defaultValue) ? cell.defaultValue : [];
-    const val = arr[col.index] ?? '';
-    return String(val);
+
+    return '';
   };
 
-  const isCellEditable = (cell: CellDefinition, _col: TimelineColumn): boolean => {
+  const isCellEditable = (cell: CellDefinition, col: TimelineColumn): boolean => {
+    // Scope check: non-scoped cells cannot be edited
+    if (cell.scope && cell.scope !== 'both') {
+      if (cell.scope === 'construction' && col.period === 'operation') return false;
+      if (cell.scope === 'operation' && col.period === 'construction') return false;
+    }
     if (cell.type === CellType.Formula || cell.type === CellType.Script) return false;
-    // Input type: all columns editable (auto-array across timeline)
     return true;
   };
 
   const handleCellEdit = (cell: CellDefinition, col: TimelineColumn, rawValue: string) => {
+    // Scope check: prevent editing outside the cell's scope
+    if (cell.scope && cell.scope !== 'both') {
+      if (cell.scope === 'construction' && col.period === 'operation') return;
+      if (cell.scope === 'operation' && col.period === 'construction') return;
+    }
     if (cell.type === CellType.Formula || cell.type === CellType.Script) return;
-
-    // For Input type: always save as array across timeline columns
     const arr = Array.isArray(cell.defaultValue) ? [...cell.defaultValue] : [];
     const numVal = rawValue === '' ? undefined : Number(rawValue);
-    // Ensure array length
     while (arr.length <= col.index) arr.push(undefined as any);
     arr[col.index] = numVal as any;
-    // Trim trailing undefineds
     while (arr.length > 0 && arr[arr.length - 1] === undefined) arr.pop();
     updateCell(cell.id, { defaultValue: arr });
   };
@@ -181,14 +462,43 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
     [colWidths]
   );
 
+  const codeDepth = (code?: string): number => {
+    if (!code) return 1;
+    return getCodeDepth(code);
+  };
+
+  const fixedHeaderStyle = (left: number, width: number): React.CSSProperties => ({
+    position: 'sticky',
+    left,
+    top: 0,
+    zIndex: 3,
+    background: '#fafafa',
+    borderBottom: '2px solid #ddd',
+    borderRight: '1px solid #ddd',
+    padding: '6px 8px',
+    fontSize: 12,
+    fontWeight: 600,
+    width,
+    minWidth: width,
+    textAlign: 'left' as const,
+  });
+
+  const fixedCellStyle = (left: number, _width: number): React.CSSProperties => ({
+    position: 'sticky',
+    left,
+    zIndex: 1,
+    background: '#fff',
+    borderBottom: '1px solid #eee',
+    borderRight: '1px solid #ddd',
+    padding: '4px 8px',
+    fontSize: 12,
+  });
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <div style={{ marginBottom: 8, display: 'flex', gap: 8, alignItems: 'center' }}>
-        <button onClick={addCell} style={{ padding: '4px 12px', fontSize: 13 }}>
-          + 添加指标
-        </button>
         <span style={{ fontSize: 12, color: '#666' }}>
-          共 {cells.length} 个指标，{columns.length} 个时间列
+          共 {tableCells.length} 个指标，{columns.length} 个时间列
         </span>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
           <button
@@ -235,94 +545,36 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
         <table style={{ borderCollapse: 'collapse', tableLayout: 'fixed' }}>
           <thead>
             <tr>
-              {/* Fixed columns header */}
-              <th
-                style={{
-                  position: 'sticky',
-                  left: 0,
-                  zIndex: 3,
-                  background: '#fafafa',
-                  borderBottom: '2px solid #ddd',
-                  borderRight: '1px solid #ddd',
-                  padding: '6px 8px',
-                  fontSize: 12,
-                  fontWeight: 600,
-                  width: FIXED_COL_WIDTH,
-                  minWidth: FIXED_COL_WIDTH,
-                }}
-              >
+              {/* 1. Code */}
+              <th style={fixedHeaderStyle(CODE_LEFT, CODE_COL_WIDTH)}>
+                编码
+              </th>
+              {/* 2. Name */}
+              <th style={fixedHeaderStyle(NAME_LEFT, NAME_COL_WIDTH)}>
                 名称
               </th>
-              <th
-                style={{
-                  position: 'sticky',
-                  left: FIXED_COL_WIDTH,
-                  zIndex: 3,
-                  background: '#fafafa',
-                  borderBottom: '2px solid #ddd',
-                  borderRight: '1px solid #ddd',
-                  padding: '6px 8px',
-                  fontSize: 12,
-                  fontWeight: 600,
-                  width: 80,
-                  minWidth: 80,
-                }}
-              >
+              {/* 3. Actions (MOVED HERE) */}
+              <th style={fixedHeaderStyle(ACTION_LEFT, ACTION_COL_WIDTH)}>
+                操作
+              </th>
+              {/* 4. Type */}
+              <th style={fixedHeaderStyle(TYPE_LEFT, TYPE_COL_WIDTH)}>
                 类型
               </th>
-              <th
-                style={{
-                  position: 'sticky',
-                  left: FIXED_COL_WIDTH + 80,
-                  zIndex: 3,
-                  background: '#fafafa',
-                  borderBottom: '2px solid #ddd',
-                  borderRight: '1px solid #ddd',
-                  padding: '6px 8px',
-                  fontSize: 12,
-                  fontWeight: 600,
-                  width: 60,
-                  minWidth: 60,
-                }}
-              >
+              {/* 5. Unit */}
+              <th style={fixedHeaderStyle(UNIT_LEFT, UNIT_COL_WIDTH)}>
                 单位
               </th>
-              <th
-                style={{
-                  position: 'sticky',
-                  left: FIXED_COL_WIDTH + 140,
-                  zIndex: 3,
-                  background: '#fafafa',
-                  borderBottom: '2px solid #ddd',
-                  borderRight: '1px solid #ddd',
-                  padding: '6px 8px',
-                  fontSize: 12,
-                  fontWeight: 600,
-                  width: 200,
-                  minWidth: 200,
-                }}
-              >
+              {/* 6. Formula */}
+              <th style={fixedHeaderStyle(FORMULA_LEFT, FORMULA_COL_WIDTH)}>
                 公式
               </th>
-              <th
-                style={{
-                  position: 'sticky',
-                  left: FIXED_COL_WIDTH + 340,
-                  zIndex: 3,
-                  background: '#fafafa',
-                  borderBottom: '2px solid #ddd',
-                  borderRight: '1px solid #ddd',
-                  padding: '6px 8px',
-                  fontSize: 12,
-                  fontWeight: 600,
-                  width: 80,
-                  minWidth: 80,
-                }}
-              >
+              {/* 7. Scope */}
+              <th style={fixedHeaderStyle(SCOPE_LEFT, SCOPE_COL_WIDTH)}>
                 作用区间
               </th>
 
-              {/* Timeline columns header */}
+              {/* Timeline columns */}
               {columns.map((col, idx) => (
                 <th
                   key={col.index}
@@ -346,7 +598,6 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
                 >
                   <div style={{ position: 'relative', height: '100%' }}>
                     {col.label}
-                    {/* Drag handle */}
                     <div
                       onMouseDown={(e) => handleDragStart(e, idx)}
                       style={{
@@ -365,19 +616,28 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
             </tr>
           </thead>
           <tbody>
-            {cells.map((cell) => (
+            {displayCells.map((cell) => (
               <tr key={cell.id}>
-                {/* Fixed: Name */}
+                {/* 1. Code */}
+                <td style={fixedCellStyle(CODE_LEFT, CODE_COL_WIDTH)}>
+                  {hasChildren(cell.id) ? (
+                    <span
+                      onClick={() => toggleCollapse(cell.code!)}
+                      style={{ cursor: 'pointer', marginRight: 4, userSelect: 'none' }}
+                    >
+                      {isCollapsed(cell.code!) ? '▶' : '▼'}
+                    </span>
+                  ) : (
+                    <span style={{ marginRight: 4, display: 'inline-block', width: 12 }} />
+                  )}
+                  {cell.code || '-'}
+                </td>
+
+                {/* 2. Name with indent */}
                 <td
                   style={{
-                    position: 'sticky',
-                    left: 0,
-                    zIndex: 1,
-                    background: '#fff',
-                    borderBottom: '1px solid #eee',
-                    borderRight: '1px solid #ddd',
-                    padding: '4px 8px',
-                    fontSize: 12,
+                    ...fixedCellStyle(NAME_LEFT, NAME_COL_WIDTH),
+                    paddingLeft: `${8 + (codeDepth(cell.code) - 1) * 16}px`,
                   }}
                 >
                   <input
@@ -392,19 +652,84 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
                     }}
                   />
                 </td>
-                {/* Fixed: Type */}
-                <td
-                  style={{
-                    position: 'sticky',
-                    left: FIXED_COL_WIDTH,
-                    zIndex: 1,
-                    background: '#fff',
-                    borderBottom: '1px solid #eee',
-                    borderRight: '1px solid #ddd',
-                    padding: '4px 8px',
-                    fontSize: 12,
-                  }}
-                >
+
+                {/* 3. Actions */}
+                <td style={fixedCellStyle(ACTION_LEFT, ACTION_COL_WIDTH)}>
+                  <button
+                    onClick={() => indentCell(cell.id)}
+                    title="缩进 (设为子级)"
+                    style={{
+                      color: '#1976d2',
+                      background: 'none',
+                      border: 'none',
+                      cursor: 'pointer',
+                      fontSize: 13,
+                      marginRight: 2,
+                    }}
+                  >
+                    →
+                  </button>
+                  <button
+                    onClick={() => outdentCell(cell.id)}
+                    title="反缩进 (提升)"
+                    style={{
+                      color: '#1976d2',
+                      background: 'none',
+                      border: 'none',
+                      cursor: 'pointer',
+                      fontSize: 13,
+                      marginRight: 2,
+                    }}
+                  >
+                    ←
+                  </button>
+                  <button
+                    onClick={() => insertCellAt(cell.id)}
+                    title="插入同行"
+                    style={{
+                      color: '#1976d2',
+                      background: 'none',
+                      border: 'none',
+                      cursor: 'pointer',
+                      fontSize: 13,
+                      marginRight: 2,
+                    }}
+                  >
+                    +
+                  </button>
+                  {hasChildren(cell.id) && (
+                    <button
+                      onClick={() => generateSummary(cell.id)}
+                      title="一键生成子级汇总公式"
+                      style={{
+                        color: '#2e7d32',
+                        background: 'none',
+                        border: 'none',
+                        cursor: 'pointer',
+                        fontSize: 13,
+                        marginRight: 2,
+                      }}
+                    >
+                      Σ
+                    </button>
+                  )}
+                  <button
+                    onClick={() => removeCell(cell.id)}
+                    title="删除"
+                    style={{
+                      color: '#c62828',
+                      background: 'none',
+                      border: 'none',
+                      cursor: 'pointer',
+                      fontSize: 13,
+                    }}
+                  >
+                    ×
+                  </button>
+                </td>
+
+                {/* 4. Type */}
+                <td style={fixedCellStyle(TYPE_LEFT, TYPE_COL_WIDTH)}>
                   <select
                     value={cell.type}
                     onChange={(e) => updateCell(cell.id, { type: e.target.value as CellType })}
@@ -417,19 +742,9 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
                     ))}
                   </select>
                 </td>
-                {/* Fixed: Unit */}
-                <td
-                  style={{
-                    position: 'sticky',
-                    left: FIXED_COL_WIDTH + 80,
-                    zIndex: 1,
-                    background: '#fff',
-                    borderBottom: '1px solid #eee',
-                    borderRight: '1px solid #ddd',
-                    padding: '4px 8px',
-                    fontSize: 12,
-                  }}
-                >
+
+                {/* 5. Unit */}
+                <td style={fixedCellStyle(UNIT_LEFT, UNIT_COL_WIDTH)}>
                   <input
                     value={cell.unit || ''}
                     onChange={(e) => updateCell(cell.id, { unit: e.target.value })}
@@ -442,46 +757,44 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
                     }}
                   />
                 </td>
-                {/* Fixed: Formula */}
-                <td
-                  style={{
-                    position: 'sticky',
-                    left: FIXED_COL_WIDTH + 140,
-                    zIndex: 1,
-                    background: '#fff',
-                    borderBottom: '1px solid #eee',
-                    borderRight: '1px solid #ddd',
-                    padding: '4px 8px',
-                    fontSize: 12,
-                    minWidth: 200,
-                  }}
-                >
-                  {cell.type === CellType.Formula || cell.type === CellType.Script ? (
-                    <FormulaEditor
-                      value={cell.formula}
-                      onChange={(v) => updateCell(cell.id, { formula: v })}
-                      model={model}
-                      currentCellId={cell.id}
-                    />
-                  ) : (
-                    <span style={{ color: '#999' }}>-</span>
-                  )}
+
+                {/* 6. Formula (compact badge + click to open modal) */}
+                <td style={fixedCellStyle(FORMULA_LEFT, FORMULA_COL_WIDTH)}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
+                    {cell.type === CellType.Formula || cell.type === CellType.Script ? (
+                      <FormulaEditor
+                        value={cell.formula}
+                        onChange={(v) => updateCell(cell.id, { formula: v })}
+                        model={model}
+                        currentCellId={cell.id}
+                        mode="compact"
+                        onFocus={() => setEditingFormulaCellId(cell.id)}
+                      />
+                    ) : (
+                      <span style={{ color: '#999' }}>−</span>
+                    )}
+                  </div>
                 </td>
-                {/* Fixed: Scope */}
-                <td
-                  style={{
-                    position: 'sticky',
-                    left: FIXED_COL_WIDTH + 340,
-                    zIndex: 1,
-                    background: '#fff',
-                    borderBottom: '1px solid #eee',
-                    borderRight: '1px solid #ddd',
-                    padding: '4px 8px',
-                    fontSize: 12,
-                    width: 80,
-                    minWidth: 80,
-                  }}
-                >
+
+                {/* Modal for editing formulas */}
+                {editingFormulaCellId && (() => {
+                  const editingCell = model.cells.find(c => c.id === editingFormulaCellId);
+                  if (!editingCell) return null;
+                  return (
+                    <FormulaEditModal
+                      cellName={editingCell.name}
+                      cellCode={editingCell.code || ''}
+                      cellId={editingCell.id}
+                      initialFormula={editingCell.formula}
+                      model={model}
+                      onSave={(formula) => updateCell(editingCell.id, { formula })}
+                      onClose={() => setEditingFormulaCellId(null)}
+                    />
+                  );
+                })()}
+
+                {/* 7. Scope */}
+                <td style={fixedCellStyle(SCOPE_LEFT, SCOPE_COL_WIDTH)}>
                   {cell.type === CellType.Formula || cell.type === CellType.Script ? (
                     <select
                       value={cell.scope ?? 'both'}
@@ -497,11 +810,11 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
                   )}
                 </td>
 
-                {/* Timeline value cells */}
+                {/* Timeline cells - Formula text NEVER shown here */}
                 {columns.map((col, idx) => {
                   const isEditing =
                     editingCell?.cellId === cell.id && editingCell?.colIndex === col.index;
-                  const displayValue = getCellDisplayValue(cell, col);
+                  const displayValue = getCellDisplayValue(cell, col, 'timeline');
                   const canEdit = isCellEditable(cell, col);
 
                   return (
@@ -581,37 +894,13 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
                     </td>
                   );
                 })}
-
-                {/* Actions column */}
-                <td
-                  style={{
-                    borderBottom: '1px solid #eee',
-                    padding: '4px 8px',
-                    fontSize: 12,
-                    textAlign: 'center',
-                  }}
-                >
-                  <button
-                    onClick={() => removeCell(cell.id)}
-                    style={{
-                      color: '#c62828',
-                      background: 'none',
-                      border: 'none',
-                      cursor: 'pointer',
-                      fontSize: 14,
-                    }}
-                    title="删除"
-                  >
-                    ×
-                  </button>
-                </td>
               </tr>
             ))}
 
-            {cells.length === 0 && (
+            {displayCells.length === 0 && (
               <tr>
                 <td
-                  colSpan={5 + columns.length + 1}
+                  colSpan={7 + columns.length}
                   style={{
                     padding: 32,
                     textAlign: 'center',
@@ -619,7 +908,7 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
                     fontSize: 14,
                   }}
                 >
-                  当前表暂无指标，点击上方"+ 添加指标"开始编辑
+                  当前表暂无指标，点击行内"+"按钮或新建表开始编辑
                 </td>
               </tr>
             )}
@@ -629,3 +918,13 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
     </div>
   );
 };
+
+function compareCode(a: string, b: string): number {
+  const ap = a.split('.').map(Number);
+  const bp = b.split('.').map(Number);
+  const minLen = Math.min(ap.length, bp.length);
+  for (let i = 0; i < minLen; i++) {
+    if (ap[i] !== bp[i]) return ap[i] - bp[i];
+  }
+  return ap.length - bp.length;
+}

@@ -1,6 +1,7 @@
 import { parse } from '@economic/core/src/formula/parser';
 import { financialFunctions } from '@economic/core/src/formula/financialFunctions';
 import { ModelDefinition, CellType, ParameterDefinition } from '@economic/core';
+import { recomputeCodes } from '@economic/core/src/utils/coding.js';
 import { ASTCompiler } from '@economic/executor/src/compiler/ASTCompiler';
 import { SafeVM } from '@economic/executor/src/vm/SafeVM';
 import { ResultRepository } from '../repository/ResultRepository.js';
@@ -67,11 +68,19 @@ export class ComputeService {
       const timeRange = Array.from({ length: maxTime + 1 }, (_, i) => i);
 
       for (const t of timeRange) {
+        // Scope check: if cell is scoped to a specific period and current t
+        // is outside that period, save 0 and skip computation
+        if (!this.isInScope(cell.scope, t, constructionCols)) {
+          resultRepo.save(cell.id, model.id, t, 0);
+          results.push({ cellId: cell.id, timeIndex: t, value: 0 });
+          continue;
+        }
+
         try {
           const ast = parse(cell.formula);
           const jsCode = this.compiler.compile(ast);
           const ctx = this.buildContext(
-            t, cellMap, paramValues, paramMap, resultRepo, cell.id, model.id, tableNameToId
+            t, cellMap, paramValues, paramMap, resultRepo, cell.id, model.id, tableNameToId, constructionCols, model.parameters
           );
           const result = this.vm.execute(jsCode, { ctx });
           const numericResult = typeof result === 'number' ? result : null;
@@ -176,7 +185,10 @@ export class ComputeService {
 
   /**
    * Extract parameter dependencies from a formula.
-   * Supports: bare param id refs (=p1), ctx.参数.name refs.
+   * Supports:
+   *   - ctx.参数.名称 ref
+   *   - ctx.参数.父.子 ref (按 display path 或 code path)
+   *   - bare param id/name refs
    * Only returns IDs of other parameters.
    */
   private extractParamDepsFromFormula(
@@ -185,6 +197,15 @@ export class ComputeService {
   ): string[] {
     const paramIdSet = new Set(parameters.map(p => p.id));
     const paramNameToId = new Map(parameters.map(p => [p.name, p.id]));
+    // Build code -> id lookup for hierarchical code refs
+    const codeToId = new Map(parameters.map(p => [p.code, p.id]).filter(([c]) => c) as [string, string][]);
+    // Build code -> full path mapping for parameter refs by path
+    const paramCodeToPath = this.buildParamPathMap(parameters);
+    const pathToId = new Map<string, string>();
+    for (const [code, path] of paramCodeToPath.entries()) {
+      pathToId.set(path, codeToId.get(code)!);
+    }
+
     const deps = new Set<string>();
 
     try {
@@ -193,10 +214,26 @@ export class ComputeService {
         if (!node) return;
         switch (node.type) {
           case 'CellRef': {
-            // Check if table === '参数' → it's a parameter ref
             if (node.table === '参数') {
-              const pid = paramNameToId.get(node.field);
-              if (pid) deps.add(pid);
+              const parts = (node.field as string).split('.');
+              // Try full path match first
+              const path = '参数.' + node.field;
+              const byPath = pathToId.get(path);
+              if (byPath) {
+                deps.add(byPath);
+                break;
+              }
+              // Try leaf code match
+              const leafCode = parts[parts.length - 1];
+              const byCode = codeToId.get(leafCode);
+              if (byCode) {
+                deps.add(byCode);
+                break;
+              }
+              // Try leaf name match
+              const leafName = parts[parts.length - 1];
+              const byName = paramNameToId.get(leafName);
+              if (byName) deps.add(byName);
             }
             break;
           }
@@ -225,15 +262,40 @@ export class ComputeService {
     return Array.from(deps);
   }
 
+  /**
+   * Build parameter code -> full display path map.
+   * E.g. code "1.2" → "参数.总投资.建设投资"
+   */
+  private buildParamPathMap(parameters: ParameterDefinition[]): Map<string, string> {
+    const codeToName = new Map(parameters.map(p => [p.code, p.name]).filter(([c]) => c) as [string, string][]);
+    const codeToParentId = new Map(parameters.map(p => [p.code, p.parentId ?? null]).filter(([c]) => c) as [string, string | null][]);
+    const result = new Map<string, string>();
+    for (const p of parameters) {
+      if (!p.code) continue;
+      const parts: string[] = [];
+      let curCode: string | null = p.code;
+      while (curCode) {
+        parts.unshift(codeToName.get(curCode) ?? curCode);
+        curCode = codeToParentId.get(curCode) ?? null;
+        // If parentId is a cell id rather than code, stop
+        if (curCode && !codeToName.has(curCode)) break;
+      }
+      result.set(p.code, '参数.' + parts.join('.'));
+    }
+    return result;
+  }
+
   private buildContext(
     t: number,
     cellMap: Map<string, ModelDefinition['cells'][number]>,
     paramValues: Map<string, unknown>,
     paramMap: Map<string, ParameterDefinition>,
     resultRepo: ResultRepository,
-    targetCellId: string,
+    _targetCellId: string, // kept for backward compat
     modelId: string,
-    tableNameToId: Map<string, string>
+    tableNameToId: Map<string, string>,
+    constructionCols: number,
+    parameters: ParameterDefinition[]
   ) {
     const ctx: any = {
       t,
@@ -241,21 +303,62 @@ export class ComputeService {
       参数: {},
     };
 
+    // Build parameter lookup maps
+    const codeToId = new Map(parameters.map(p => [p.code, p.id]).filter(([c]) => c) as [string, string][]);
+
     ctx.getCell = (tableRef: string, field: string, timeIdx?: number) => {
       if (tableRef === '参数') {
+        // Hierarchical path resolution for parameters
+        const parts = field.split('.');
+        // Try full path match backwards
+        let resolvedId: string | undefined;
+        for (let i = parts.length; i >= 1; i--) {
+          const pathCode = parts.slice(parts.length - i).join('.');
+          resolvedId = codeToId.get(pathCode);
+          if (resolvedId) break;
+        }
+        // Fallback: match by name
+        if (!resolvedId) {
+          for (const p of parameters) {
+            if (p.name === field || (parts.length > 0 && p.name === parts[parts.length - 1])) {
+              resolvedId = p.id;
+              break;
+            }
+          }
+        }
+        if (resolvedId && paramValues.has(resolvedId)) {
+          return paramValues.get(resolvedId);
+        }
+        // Legacy name fallback via ctx.参数 name map
         return ctx.参数[field] ?? 0;
       }
       // Resolve table name -> table ID
       const resolvedTableId = tableNameToId.get(tableRef) ?? tableRef;
       const idx = timeIdx ?? t;
+
+      // Phase 1: match by stable code (preferred)
       for (const [, cell] of cellMap) {
-        if (cell.tableId === resolvedTableId && cell.name === field && cell.id !== targetCellId) {
+        if (cell.tableId === resolvedTableId && cell.code === field) {
+          if (!this.isInScope(cell.scope, idx, constructionCols)) return 0;
           const results = resultRepo.findByCell(cell.id);
           const found = results.find(r => r.timeIndex === idx && r.modelId === modelId);
           if (found) return found.value;
-          // Handle Input cell `defaultValue` as array
           const dv = cell.defaultValue ?? 0;
-          if (Array.isArray(dv) && idx < dv.length) return dv[idx];
+          if (Array.isArray(dv) && idx >= 0 && idx < dv.length) return dv[idx];
+          if (Array.isArray(dv)) return 0;
+          return dv;
+        }
+      }
+
+      // Phase 2: fallback match by name (legacy compat)
+      for (const [, cell] of cellMap) {
+        if (cell.tableId === resolvedTableId && cell.name === field) {
+          if (!this.isInScope(cell.scope, idx, constructionCols)) return 0;
+          const results = resultRepo.findByCell(cell.id);
+          const found = results.find(r => r.timeIndex === idx && r.modelId === modelId);
+          if (found) return found.value;
+          const dv = cell.defaultValue ?? 0;
+          if (Array.isArray(dv) && idx >= 0 && idx < dv.length) return dv[idx];
           if (Array.isArray(dv)) return 0;
           return dv;
         }
@@ -265,14 +368,49 @@ export class ComputeService {
 
     ctx.getCellArray = (tableRef: string, field: string) => {
       if (tableRef === '参数') {
+        // Hierarchical path resolution for parameters
+        const parts = field.split('.');
+        let resolvedId: string | undefined;
+        for (let i = parts.length; i >= 1; i--) {
+          const pathCode = parts.slice(parts.length - i).join('.');
+          resolvedId = codeToId.get(pathCode);
+          if (resolvedId) break;
+        }
+        if (!resolvedId) {
+          for (const p of parameters) {
+            if (p.name === field || (parts.length > 0 && p.name === parts[parts.length - 1])) {
+              resolvedId = p.id;
+              break;
+            }
+          }
+        }
+        if (resolvedId) {
+          const v = paramValues.get(resolvedId);
+          return v !== undefined ? [v] : [];
+        }
         const v = ctx.参数[field];
         return v !== undefined ? [v] : [];
       }
       const resolvedTableId = tableNameToId.get(tableRef) ?? tableRef;
+
+      // Phase 1: match by stable code
       for (const [, cell] of cellMap) {
-        if (cell.tableId === resolvedTableId && cell.name === field && cell.id !== targetCellId) {
+        if (cell.tableId === resolvedTableId && cell.code === field) {
           const results = resultRepo.findByCell(cell.id);
-          return results.map(r => r.value).filter(v => v !== null);
+          return results
+            .filter(r => this.isInScope(cell.scope, r.timeIndex, constructionCols))
+            .map(r => r.value)
+            .filter(v => v !== null);
+        }
+      }
+      // Phase 2: fallback match by name
+      for (const [, cell] of cellMap) {
+        if (cell.tableId === resolvedTableId && cell.name === field) {
+          const results = resultRepo.findByCell(cell.id);
+          return results
+            .filter(r => this.isInScope(cell.scope, r.timeIndex, constructionCols))
+            .map(r => r.value)
+            .filter(v => v !== null);
         }
       }
       return [];
@@ -280,7 +418,11 @@ export class ComputeService {
 
     // Direct cell-id references
     for (const [id, cell] of cellMap) {
-      if (id === targetCellId) continue;
+      if (id === _targetCellId) continue;
+      if (!this.isInScope(cell.scope, t, constructionCols)) {
+        ctx[id] = 0;
+        continue;
+      }
       const results = resultRepo.findByCell(id);
       const found = results.find(r => r.timeIndex === t && r.modelId === modelId);
       if (found) {
@@ -297,8 +439,20 @@ export class ComputeService {
       }
     }
 
-    // Parameter values (by id and in 参数 namespace)
+    // Parameter values: expose by id, name, and hierarchical paths
     const paramNs: Record<string, unknown> = {};
+    const paramPathValueMap = this.buildParamValueMap(parameters, paramValues);
+    for (const [path, value] of paramPathValueMap.entries()) {
+      // Set nested object structure: 参数.总投资.建设投资
+      const parts = path.split('.');
+      let cur = paramNs;
+      for (let i = 0; i < parts.length - 1; i++) {
+        if (cur[parts[i]] === undefined) cur[parts[i]] = {};
+        cur = cur[parts[i]] as Record<string, unknown>;
+      }
+      cur[parts[parts.length - 1]] = value;
+    }
+    // Also expose flat name entries for backward compat
     for (const [id, value] of paramValues) {
       ctx[id] = value;
       const paramDef = paramMap.get(id);
@@ -310,8 +464,39 @@ export class ComputeService {
   }
 
   /**
+   * Build flat path -> value map for parameters (e.g. "总投资.建设投资" -> 100)
+   */
+  private buildParamValueMap(
+    parameters: ParameterDefinition[],
+    paramValues: Map<string, unknown>
+  ): Map<string, unknown> {
+    const codeToId = new Map(parameters.map(p => [p.code, p.id]).filter(([c]) => c) as [string, string][]);
+    const codeToName = new Map(parameters.map(p => [p.code, p.name]).filter(([c]) => c) as [string, string][]);
+    const codeToParentId = new Map(parameters.map(p => [p.code, p.parentId ?? null]).filter(([c]) => c) as [string, string | null][]);
+    const result = new Map<string, unknown>();
+    for (const p of parameters) {
+      if (!p.code) continue;
+      const parts: string[] = [];
+      let curCode: string | null = p.code;
+      while (curCode) {
+        parts.unshift(codeToName.get(curCode) ?? curCode);
+        // parentId could be cell ID or code; if it's not a code, stop
+        const parentId = codeToParentId.get(curCode);
+        if (parentId && codeToName.has(parentId)) {
+          curCode = parentId;
+        } else {
+          break;
+        }
+      }
+      const path = parts.join('.');
+      result.set(path, paramValues.get(p.id));
+    }
+    return result;
+  }
+
+  /**
    * Build VM context for parameter evaluation.
-   * Only exposes ctx.参数 namespace and bare param ids.
+   * Exposes ctx.参数 namespace with hierarchical paths, bare param ids, and names.
    */
   private buildParamContext(
     evaluatedValues: Map<string, unknown>,
@@ -319,15 +504,25 @@ export class ComputeService {
   ): Record<string, unknown> {
     const ctx: Record<string, unknown> = { t: 0, functions: financialFunctions, 参数: {} };
 
-    const nameToId = new Map(parameters.map(p => [p.name, p.id]));
-
     // Expose by id
     for (const [id, val] of evaluatedValues) {
       ctx[id] = val;
     }
 
-    // Build 参数 namespace by name
+    // Build 参数 namespace with hierarchical paths
+    const paramPathValueMap = this.buildParamValueMap(parameters, evaluatedValues);
     const paramNs: Record<string, unknown> = {};
+    for (const [path, value] of paramPathValueMap.entries()) {
+      const parts = path.split('.');
+      let cur = paramNs;
+      for (let i = 0; i < parts.length - 1; i++) {
+        if (cur[parts[i]] === undefined) cur[parts[i]] = {};
+        cur = cur[parts[i]] as Record<string, unknown>;
+      }
+      cur[parts[parts.length - 1]] = value;
+    }
+
+    // Also expose flat entries for backward compat
     for (const p of parameters) {
       const val = evaluatedValues.get(p.id);
       if (val !== undefined) {
@@ -337,5 +532,21 @@ export class ComputeService {
     ctx['参数'] = paramNs;
 
     return ctx;
+  }
+
+  /**
+   * Check if a cell is in scope at a given time index.
+   * Returns true if the cell should be visible/accessible at time t.
+   */
+  private isInScope(
+    scope: ModelDefinition['cells'][number]['scope'],
+    t: number,
+    constructionCols: number
+  ): boolean {
+    const effectiveScope = scope ?? 'both';
+    if (effectiveScope === 'both') return true;
+    if (effectiveScope === 'construction') return t < constructionCols;
+    if (effectiveScope === 'operation') return t >= constructionCols;
+    return true;
   }
 }

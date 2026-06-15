@@ -260,7 +260,12 @@ class Parser {
   private cellRef(): ASTNode {
     const table = this.expect(TokenType.Table).value;
     this.expect(TokenType.Dot);
-    const field = this.expect(TokenType.Field).value;
+    const fieldToken = this.peek();
+    if (fieldToken.type !== TokenType.Field && fieldToken.type !== TokenType.Number) {
+      throw new ParseError(`Expected Field or Number but got ${fieldToken.type}`, fieldToken.pos);
+    }
+    this.advance();
+    const field = fieldToken.value;
 
     let timeRange: { start: number; end: number } | '*' | null = null;
     let timeExpression: ASTNode | null = null;

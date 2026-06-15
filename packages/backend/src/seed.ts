@@ -4,33 +4,240 @@ import { ModelRepository } from './repository/ModelRepository.js';
 import { ResultRepository } from './repository/ResultRepository.js';
 import { ModelDefinition, CellType, ParameterType } from '@economic/core';
 
+// Auto-exported from model "测试模型" (光储-001) on 2026-06-14T15:13:16.857Z
 export const sampleModel: ModelDefinition = {
-  id: '光储-001',
-  name: '光储项目财务模型',
-  version: '0.1.0',
-  description: '光伏电站 + 储能项目经济评价（演示模板）',
-  tables: [
-    { id: 't1', name: '参数输入表', order: 0, description: '项目基础参数' },
-    { id: 't2', name: '投资估算表', order: 1, description: '建设期投资明细' },
-    { id: 't3', name: '利润表', order: 2, description: '运营期损益' },
+  "id": "光储-001",
+  "name": "测试模型",
+  "version": "0.1.0",
+  "description": "通用经济评价模型（可自定义）",
+  "tables": [
+    {
+      "id": "t1",
+      "name": "资金筹措表",
+      "order": 0,
+      "description": "项目基础参数"
+    }
   ],
-  cells: [
-    { id: 'c1', name: '总投资', tableId: 't2', formula: '=c2+c3', type: CellType.Formula, unit: '万元', isArray: false },
-    { id: 'c2', name: '光伏投资', tableId: 't2', formula: '', type: CellType.Input, unit: '万元', defaultValue: 500, isArray: false },
-    { id: 'c3', name: '储能投资', tableId: 't2', formula: '', type: CellType.Input, unit: '万元', defaultValue: 300, isArray: false },
-    { id: 'c4', name: '年收入', tableId: 't3', formula: '=c5*0.35', type: CellType.Formula, unit: '万元', isArray: true },
-    { id: 'c5', name: '发电量', tableId: 't3', formula: '', type: CellType.Input, unit: '万kWh', defaultValue: 200, isArray: true },
-    { id: 'c6', name: '年成本', tableId: 't3', formula: '=c5*0.05', type: CellType.Formula, unit: '万元', isArray: true },
-    { id: 'c7', name: '净利润', tableId: 't3', formula: '=c4-c6', type: CellType.Formula, unit: '万元', isArray: true },
+  "cells": [
+    {
+      "id": "cell-1781449364997",
+      "name": "施工进度安排",
+      "code": "1",
+      "parentId": null,
+      "sortOrder": 0,
+      "tableId": "t1",
+      "formula": "",
+      "type": "Input",
+      "unit": "",
+      "isArray": true,
+      "scope": "both"
+    },
+    {
+      "id": "cell-1781449374956",
+      "name": "动态总投资",
+      "code": "2",
+      "parentId": null,
+      "sortOrder": 1,
+      "tableId": "t1",
+      "formula": "",
+      "type": "Input",
+      "unit": "",
+      "isArray": true,
+      "scope": "both"
+    },
+    {
+      "id": "cell-1781449384482",
+      "name": "静态总投资",
+      "code": "2.1",
+      "parentId": "cell-1781449374956",
+      "sortOrder": 2,
+      "tableId": "t1",
+      "formula": "",
+      "type": "Input",
+      "unit": "",
+      "isArray": true,
+      "scope": "both"
+    },
+    {
+      "id": "cell-1781449396061",
+      "name": "建设期利息",
+      "code": "2.2",
+      "parentId": "cell-1781449374956",
+      "sortOrder": 3,
+      "tableId": "t1",
+      "formula": "",
+      "type": "Input",
+      "unit": "",
+      "isArray": true,
+      "scope": "both"
+    },
+    {
+      "id": "cell-1781449403195",
+      "name": "流动资金",
+      "code": "2.3",
+      "parentId": "cell-1781449374956",
+      "sortOrder": 4,
+      "tableId": "t1",
+      "formula": "",
+      "type": "Input",
+      "unit": "",
+      "isArray": true,
+      "scope": "both"
+    },
+    {
+      "id": "cell-1781449411511",
+      "name": "资金来源",
+      "code": "3",
+      "parentId": null,
+      "sortOrder": 5,
+      "tableId": "t1",
+      "formula": "",
+      "type": "Input",
+      "unit": "",
+      "isArray": true,
+      "scope": "both"
+    },
+    {
+      "id": "cell-1781449425574",
+      "name": "资本金",
+      "code": "3.1",
+      "parentId": "cell-1781449411511",
+      "sortOrder": 6,
+      "tableId": "t1",
+      "formula": "",
+      "type": "Input",
+      "unit": "",
+      "isArray": true,
+      "scope": "both"
+    },
+    {
+      "id": "cell-1781449434398",
+      "name": "用于建设投资",
+      "code": "3.1.1",
+      "parentId": "cell-1781449425574",
+      "sortOrder": 7,
+      "tableId": "t1",
+      "formula": "",
+      "type": "Input",
+      "unit": "",
+      "isArray": true,
+      "scope": "both"
+    },
+    {
+      "id": "cell-1781449443530",
+      "name": "用于建设期利息",
+      "code": "3.1.2",
+      "parentId": "cell-1781449425574",
+      "sortOrder": 8,
+      "tableId": "t1",
+      "formula": "",
+      "type": "Input",
+      "unit": "",
+      "isArray": true,
+      "scope": "both"
+    },
+    {
+      "id": "cell-1781449450872",
+      "name": "用于流动资金",
+      "code": "3.1.3",
+      "parentId": "cell-1781449425574",
+      "sortOrder": 9,
+      "tableId": "t1",
+      "formula": "",
+      "type": "Input",
+      "unit": "",
+      "isArray": true,
+      "scope": "both"
+    },
+    {
+      "id": "cell-1781449466784",
+      "name": "债务资金",
+      "code": "3.2",
+      "parentId": "cell-1781449411511",
+      "sortOrder": 10,
+      "tableId": "t1",
+      "formula": "",
+      "type": "Input",
+      "unit": "",
+      "isArray": true,
+      "scope": "both"
+    },
+    {
+      "id": "cell-1781449480047",
+      "name": "用于建设投资",
+      "code": "3.2.1",
+      "parentId": "cell-1781449466784",
+      "sortOrder": 11,
+      "tableId": "t1",
+      "formula": "",
+      "type": "Input",
+      "unit": "",
+      "isArray": true,
+      "scope": "both"
+    },
+    {
+      "id": "cell-1781449494710",
+      "name": "用于建设期利息",
+      "code": "3.2.2",
+      "parentId": "cell-1781449466784",
+      "sortOrder": 12,
+      "tableId": "t1",
+      "formula": "",
+      "type": "Input",
+      "unit": "",
+      "isArray": true,
+      "scope": "both"
+    },
+    {
+      "id": "cell-1781449502210",
+      "name": "用于流动资金",
+      "code": "3.2.3",
+      "parentId": "cell-1781449466784",
+      "sortOrder": 13,
+      "tableId": "t1",
+      "formula": "",
+      "type": "Input",
+      "unit": "",
+      "isArray": true,
+      "scope": "both"
+    }
   ],
-  parameters: [
-    { id: 'p1', name: '装机容量', type: ParameterType.Number, defaultValue: 100, unit: 'MW', description: '光伏装机容量' },
-    { id: 'p2', name: '建设期', type: ParameterType.Number, defaultValue: 0.5, unit: '年', description: '建设期时长（年）' },
-    { id: 'p3', name: '运营期', type: ParameterType.Number, defaultValue: 20, unit: '年', description: '运营期时长（年）' },
-    { id: 'p4', name: '上网电价', type: ParameterType.Number, defaultValue: 0.35, unit: '元/kWh', description: '上网电价' },
+  "parameters": [
+    {
+      "id": "p1",
+      "name": "装机容量",
+      "type": "number",
+      "defaultValue": 100,
+      "unit": "MW",
+      "description": "光伏装机容量"
+    },
+    {
+      "id": "p2",
+      "name": "建设期利息贷款利率",
+      "type": "percentage",
+      "defaultValue": 3.5,
+      "unit": "",
+      "description": "建设期时长（年）"
+    },
+    {
+      "id": "p3",
+      "name": "项目静态总投资",
+      "type": "number",
+      "defaultValue": 26700,
+      "unit": "年",
+      "description": "运营期时长（年）"
+    }
   ],
-  timeline: { constructionYears: 0.5, operationYears: 20, startYear: 2024 },
-  metadata: { author: 'template', createdAt: '2024-06-13', updatedAt: '2024-06-13' },
+  "timeline": {
+    "constructionYears": 0.5,
+    "operationYears": 20,
+    "startYear": 2024
+  },
+  "metadata": {
+    "author": "template",
+    "createdAt": "2024-06-13",
+    "updatedAt": "2024-06-13"
+  }
 };
 
 export function seedData(db: Database.Database): void {
@@ -41,29 +248,7 @@ export function seedData(db: Database.Database): void {
 
   modelRepo.create(sampleModel);
 
-  const results: Array<{ cellId: string; t: number; value: number | null }> = [
-    { cellId: 'c1', t: 0, value: 800 },
-    { cellId: 'c2', t: 0, value: 500 },
-    { cellId: 'c3', t: 0, value: 300 },
-    { cellId: 'c4', t: 1, value: 70 },
-    { cellId: 'c4', t: 2, value: 63 },
-    { cellId: 'c4', t: 3, value: 56.7 },
-    { cellId: 'c5', t: 1, value: 200 },
-    { cellId: 'c5', t: 2, value: 180 },
-    { cellId: 'c5', t: 3, value: 162 },
-    { cellId: 'c6', t: 1, value: 10 },
-    { cellId: 'c6', t: 2, value: 9 },
-    { cellId: 'c6', t: 3, value: 8.1 },
-    { cellId: 'c7', t: 1, value: 60 },
-    { cellId: 'c7', t: 2, value: 54 },
-    { cellId: 'c7', t: 3, value: 48.6 },
-  ];
-
-  for (const r of results) {
-    resultRepo.save(r.cellId, sampleModel.id, r.t, r.value);
-  }
-
-  console.log('[seed] seeded model', sampleModel.id, 'with', results.length, 'results');
+  console.log('[seed] seeded model', sampleModel.id, 'with', sampleModel.cells.length, 'cells');
 }
 
 // Allow CLI usage: DB_PATH=... node seed.js

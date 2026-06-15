@@ -31,7 +31,7 @@ describe('Export API Routes', () => {
     expect(res.statusCode).toBe(200);
     const body = JSON.parse(res.body) as Array<{ id: string; name: string }>;
     expect(body.length).toBeGreaterThan(0);
-    expect(body[0].name).toBe('光储项目财务模型');
+    expect(body[0].name).toBe('测试模型');
   });
 
   // -----------------------------------------------------------------------

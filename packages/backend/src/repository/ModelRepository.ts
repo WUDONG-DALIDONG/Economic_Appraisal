@@ -47,14 +47,17 @@ export class ModelRepository {
     for (const cell of model.cells) {
       this.db
         .prepare(
-          `INSERT INTO cells (id, table_id, model_id, name, formula, cell_type, unit, description, default_value, is_array, scope)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          `INSERT INTO cells (id, table_id, model_id, name, code, parent_id, sort_order, formula, cell_type, unit, description, default_value, is_array, scope)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           cell.id,
           cell.tableId,
           model.id,
           cell.name,
+          cell.code ?? null,
+          cell.parentId ?? null,
+          cell.sortOrder ?? 0,
           cell.formula,
           cell.type,
           cell.unit ?? null,
@@ -69,13 +72,16 @@ export class ModelRepository {
     for (const param of model.parameters) {
       this.db
         .prepare(
-          `INSERT INTO parameters (id, model_id, name, param_type, default_value, formula, min_value, max_value, unit, description, options_json)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          `INSERT INTO parameters (id, model_id, name, code, parent_id, sort_order, param_type, default_value, formula, min_value, max_value, unit, description, options_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           param.id,
           model.id,
           param.name,
+          param.code ?? null,
+          param.parentId ?? null,
+          param.sortOrder ?? 0,
           param.type,
           JSON.stringify(param.defaultValue),
           param.formula ?? null,
@@ -150,7 +156,7 @@ export class ModelRepository {
 
       // Re-insert cells
       const insertCell = this.db.prepare(
-        `INSERT INTO cells (id, table_id, model_id, name, formula, cell_type, unit, description, default_value, is_array, scope) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO cells (id, table_id, model_id, name, code, parent_id, sort_order, formula, cell_type, unit, description, default_value, is_array, scope) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       );
       for (const cell of model.cells) {
         insertCell.run(
@@ -158,6 +164,9 @@ export class ModelRepository {
           cell.tableId,
           model.id,
           cell.name,
+          cell.code ?? null,
+          cell.parentId ?? null,
+          cell.sortOrder ?? 0,
           cell.formula,
           cell.type,
           cell.unit ?? null,
@@ -170,13 +179,16 @@ export class ModelRepository {
 
       // Re-insert parameters
       const insertParam = this.db.prepare(
-        `INSERT INTO parameters (id, model_id, name, param_type, default_value, formula, min_value, max_value, unit, description, options_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO parameters (id, model_id, name, code, parent_id, sort_order, param_type, default_value, formula, min_value, max_value, unit, description, options_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       );
       for (const param of model.parameters) {
         insertParam.run(
           param.id,
           model.id,
           param.name,
+          param.code ?? null,
+          param.parentId ?? null,
+          param.sortOrder ?? 0,
           param.type,
           JSON.stringify(param.defaultValue),
           param.formula ?? null,
@@ -190,7 +202,20 @@ export class ModelRepository {
     })();
 
     // Update root model row
-    this.update(model.id, { name: model.name, version: model.version, description: model.description });
+    this.update(model.id, { 
+      name: model.name, 
+      version: model.version, 
+      description: model.description 
+    });
+    // Also update timeline and metadata JSON which are NOT handled by this.update()
+    this.db.prepare(
+      'UPDATE models SET timeline_json = ?, metadata_json = ?, updated_at = ? WHERE id = ?'
+    ).run(
+      JSON.stringify(model.timeline),
+      JSON.stringify(model.metadata),
+      new Date().toISOString(),
+      model.id
+    );
   }
 
   /** Delete a model and all its components. */
@@ -216,12 +241,15 @@ export class ModelRepository {
   /** Get cell definitions for a model. */
   findCellsByModel(modelId: string): CellDefinition[] {
     const rows = this.db
-      .prepare('SELECT * FROM cells WHERE model_id = ? ORDER BY id')
+      .prepare('SELECT * FROM cells WHERE model_id = ? ORDER BY sort_order, id')
       .all(modelId) as CellRow[];
 
     return rows.map(r => ({
       id: r.id,
       name: r.name,
+      code: r.code ?? undefined,
+      parentId: r.parent_id ?? null,
+      sortOrder: r.sort_order ?? 0,
       tableId: r.table_id,
       formula: r.formula,
       type: r.cell_type as CellDefinition['type'],
@@ -236,12 +264,15 @@ export class ModelRepository {
   /** Get parameter definitions for a model. */
   findParametersByModel(modelId: string): ParameterDefinition[] {
     const rows = this.db
-      .prepare('SELECT * FROM parameters WHERE model_id = ? ORDER BY id')
+      .prepare('SELECT * FROM parameters WHERE model_id = ? ORDER BY sort_order, id')
       .all(modelId) as ParameterRow[];
 
     return rows.map(r => ({
       id: r.id,
       name: r.name,
+      code: r.code ?? undefined,
+      parentId: r.parent_id ?? null,
+      sortOrder: r.sort_order ?? 0,
       type: r.param_type as ParameterDefinition['type'],
       defaultValue: r.default_value ? JSON.parse(r.default_value) : undefined,
       formula: r.formula ?? undefined,
@@ -280,6 +311,9 @@ interface CellRow {
   table_id: string;
   model_id: string;
   name: string;
+  code: string | null;
+  parent_id: string | null;
+  sort_order: number;
   formula: string;
   cell_type: string;
   unit: string | null;
@@ -292,6 +326,9 @@ interface ParameterRow {
   id: string;
   model_id: string;
   name: string;
+  code: string | null;
+  parent_id: string | null;
+  sort_order: number;
   param_type: string;
   default_value: string | null;
   formula: string | null;

@@ -5,6 +5,7 @@ import { ModelRepository } from '../repository/ModelRepository.js';
 import { ResultRepository } from '../repository/ResultRepository.js';
 import { ExcelExporter } from '../export/ExcelExporter.js';
 import { ComputeService } from '../compute/ComputeService.js';
+import { backupModel } from '../backup.js';
 
 export async function registerExportRoute(fastify: FastifyInstance, db: Database.Database) {
   const modelRepo = new ModelRepository(db);
@@ -57,6 +58,7 @@ export async function registerExportRoute(fastify: FastifyInstance, db: Database
     }
     try {
       modelRepo.create(body);
+      backupModel(body.id, body.name, body);
       return { id: body.id, status: 'created' };
     } catch (e: any) {
       reply.status(409);
@@ -77,6 +79,8 @@ export async function registerExportRoute(fastify: FastifyInstance, db: Database
       reply.status(404);
       return { error: 'Model not found' };
     }
+    // Backup before update
+    backupModel(id, existing.name, existing);
     modelRepo.updateFull(body);
     return { id, status: 'updated' };
   });
