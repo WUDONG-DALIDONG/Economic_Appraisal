@@ -73,6 +73,21 @@ export function tokenize(formula: string): Token[] {
       continue;
     }
 
+    // ID reference: @{cellId} or @{paramId}
+    if (char === '@' && formula[pos + 1] === '{') {
+      const start = pos;
+      pos += 2; // skip @{
+      const idStart = pos;
+      while (pos < formula.length && formula[pos] !== '}') {
+        pos++;
+      }
+      if (pos >= formula.length) throw new Error(`Unterminated @{id} reference at position ${start}`);
+      const id = formula.slice(idStart, pos);
+      pos++; // skip }
+      addToken(TokenType.IdRef, id, start);
+      continue;
+    }
+
     // String literal
     if (char === '"') {
       advance(); // consume opening quote
@@ -145,6 +160,34 @@ export function tokenize(formula: string): Token[] {
         tokens[i].type = TokenType.Field;
       }
     }
+  }
+
+  // Step 2c: merge consecutive Field.Dot.Number/Field into single Field
+  // e.g. "3.2" + "." + "2" -> "3.2.2" (supports multi-level codes like 1.2.3.4)
+  {
+    const merged: Token[] = [];
+    let i = 0;
+    while (i < tokens.length) {
+      if (tokens[i].type === TokenType.Field) {
+        const startPos = tokens[i].pos;
+        let value = tokens[i].value;
+        while (
+          i + 2 < tokens.length &&
+          tokens[i + 1].type === TokenType.Dot &&
+          (tokens[i + 2].type === TokenType.Number || tokens[i + 2].type === TokenType.Field)
+        ) {
+          value += '.' + tokens[i + 2].value;
+          i += 2;
+        }
+        merged.push({ type: TokenType.Field, value, pos: startPos });
+        i++;
+      } else {
+        merged.push(tokens[i]);
+        i++;
+      }
+    }
+    tokens.length = 0;
+    tokens.push(...merged);
   }
 
   // Step 3: followed by . -> Table name

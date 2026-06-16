@@ -1,22 +1,21 @@
 import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
-import { ModelDefinition, CellDefinition, CellType, recomputeCodes, getCodeDepth, generateSummaryFormula } from '@economic/core';
+import { ModelDefinition, CellDefinition, CellType, recomputeCodes, getCodeDepth, formulaIdToDisplay } from '@economic/core';
 import { generateTimelineColumns, TimelineColumn } from '../utils/timelineColumns.js';
 import { FormulaEditor } from '../components/FormulaEditor.js';
 import { FormulaEditModal } from '../components/FormulaEditModal.js';
+import { formatNumber } from '../utils/formatNumber.js';
 
 interface TableExcelViewProps {
   model: ModelDefinition;
   activeTableId: string;
-  computeResult: { results: Array<{ cellId: string; timeIndex: number; value: number | null }> } | null;
+  computeResult: { results: Array<{ cellId: string; timeIndex: number; value: number | null }>; errors?: Array<{ cellId: string; timeIndex: number; error: string }> } | null;
   onCellsChange: (cells: CellDefinition[]) => void;
 }
 
-type ViewMode = 'formula' | 'value';
-
 const DEFAULT_COL_WIDTH = 100;
 
-// Fixed column widths (left to right)
 const CODE_COL_WIDTH = 80;
+const ID_COL_WIDTH = 140;
 const NAME_COL_WIDTH = 120;
 const ACTION_COL_WIDTH = 120;
 const TYPE_COL_WIDTH = 80;
@@ -24,14 +23,23 @@ const UNIT_COL_WIDTH = 60;
 const FORMULA_COL_WIDTH = 80;
 const SCOPE_COL_WIDTH = 80;
 
-// Sticky left positions
-const CODE_LEFT = 0;
-const NAME_LEFT = CODE_COL_WIDTH;
-const ACTION_LEFT = NAME_LEFT + NAME_COL_WIDTH;
-const TYPE_LEFT = ACTION_LEFT + ACTION_COL_WIDTH;
-const UNIT_LEFT = TYPE_LEFT + TYPE_COL_WIDTH;
-const FORMULA_LEFT = UNIT_LEFT + UNIT_COL_WIDTH;
-const SCOPE_LEFT = FORMULA_LEFT + FORMULA_COL_WIDTH;
+function colLeft(showId: boolean, col: 'code' | 'id' | 'name' | 'action' | 'type' | 'unit' | 'formula' | 'scope'): number {
+  const idW = showId ? ID_COL_WIDTH : 0;
+  switch (col) {
+    case 'code': return 0;
+    case 'id': return CODE_COL_WIDTH;
+    case 'name': return CODE_COL_WIDTH + idW;
+    case 'action': return CODE_COL_WIDTH + idW + NAME_COL_WIDTH;
+    case 'type': return CODE_COL_WIDTH + idW + NAME_COL_WIDTH + ACTION_COL_WIDTH;
+    case 'unit': return CODE_COL_WIDTH + idW + NAME_COL_WIDTH + ACTION_COL_WIDTH + TYPE_COL_WIDTH;
+    case 'formula': return CODE_COL_WIDTH + idW + NAME_COL_WIDTH + ACTION_COL_WIDTH + TYPE_COL_WIDTH + UNIT_COL_WIDTH;
+    case 'scope': return CODE_COL_WIDTH + idW + NAME_COL_WIDTH + ACTION_COL_WIDTH + TYPE_COL_WIDTH + UNIT_COL_WIDTH + FORMULA_COL_WIDTH;
+  }
+}
+
+function fixedColsCount(showId: boolean): number {
+  return showId ? 8 : 7;
+}
 
 export const TableExcelView: React.FC<TableExcelViewProps> = ({
   model,
@@ -42,16 +50,10 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
   const tableCells = model.cells.filter((c) => c.tableId === activeTableId);
   const columns = generateTimelineColumns(model.timeline);
 
-  const [viewMode, setViewMode] = useState<ViewMode>('formula');
   const [collapsedCodes, setCollapsedCodes] = useState<Set<string>>(new Set());
   const [editingFormulaCellId, setEditingFormulaCellId] = useState<string | null>(null);
-
-  // Auto-switch to value view when a new compute result arrives
-  useEffect(() => {
-    if (computeResult && computeResult.results && computeResult.results.length > 0) {
-      setViewMode('value');
-    }
-  }, [computeResult]);
+  const [showIdColumn, setShowIdColumn] = useState(false);
+  const [precisionCellId, setPrecisionCellId] = useState<string | null>(null);
 
   const resultMap = useMemo(() => {
     const map = new Map<string, number | null>();
@@ -62,6 +64,20 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
     }
     return map;
   }, [computeResult]);
+
+  const refErrorMap = useMemo(() => {
+    const map = new Set<string>();
+    if (computeResult?.errors) {
+      for (const e of computeResult.errors) {
+        if (e.error?.includes('#REF!')) {
+          map.add(`${e.cellId}:${e.timeIndex}`);
+        }
+      }
+    }
+    return map;
+  }, [computeResult]);
+
+  const hasResults = resultMap.size > 0;
 
   const [colWidths, setColWidths] = useState<number[]>(
     () => new Array(columns.length).fill(DEFAULT_COL_WIDTH)
@@ -80,7 +96,6 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
     startWidth: number;
   } | null>(null);
 
-  // Keep colWidths in sync when number of columns changes
   useEffect(() => {
     setColWidths((prev) => {
       if (prev.length === columns.length) return prev;
@@ -92,7 +107,6 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
     });
   }, [columns.length]);
 
-  // Recompute codes for table cells and sort depth-first
   const cellsWithCodes = useMemo(() => {
     const codeMap = recomputeCodes(
       tableCells.map((c, i) => ({
@@ -106,12 +120,10 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
       ...c,
       code: codeMap.get(c.id) || c.code || '',
     }));
-    // Sort depth-first by code (numeric comparison at each level)
     updatedTableCells.sort((a, b) => compareCode(a.code || '', b.code || ''));
     return [...otherCells, ...updatedTableCells];
   }, [tableCells, activeTableId, model.cells]);
 
-  // Visible cells: filter out children of collapsed parents
   const displayCells = useMemo(() => {
     const tableRows = cellsWithCodes.filter((c) => c.tableId === activeTableId);
     const visible: CellDefinition[] = [];
@@ -120,7 +132,6 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
         visible.push(cell);
         continue;
       }
-      // Check if any ancestor is collapsed
       const parts = cell.code.split('.');
       let isHidden = false;
       for (let i = 1; i < parts.length; i++) {
@@ -136,6 +147,17 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
   }, [cellsWithCodes, activeTableId, collapsedCodes]);
 
   const updateCell = (cellId: string, updates: Partial<CellDefinition>) => {
+    if (updates.name !== undefined) {
+      const cell = cellsWithCodes.find((c) => c.id === cellId);
+      if (cell) {
+        const siblings = cellsWithCodes.filter(
+          (c) => c.tableId === cell.tableId && c.parentId === cell.parentId && c.id !== cellId
+        );
+        if (siblings.some((c) => c.name === updates.name)) {
+          return;
+        }
+      }
+    }
     const next = cellsWithCodes.map((c) =>
       c.id === cellId ? { ...c, ...updates } : c
     );
@@ -143,10 +165,15 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
   };
 
   const removeCell = (cellId: string) => {
-    const tableRows = cellsWithCodes.filter((c) => c.tableId === activeTableId);
-    const otherRows = cellsWithCodes.filter((c) => c.tableId !== activeTableId);
     const fam = buildFamilies();
     const toRemove = getDescendants(fam, cellId);
+    const msg = toRemove.length > 0
+      ? `确定删除该指标及其 ${toRemove.length} 个子指标？`
+      : '确定删除该指标？';
+    if (!confirm(msg)) return;
+
+    const tableRows = cellsWithCodes.filter((c) => c.tableId === activeTableId);
+    const otherRows = cellsWithCodes.filter((c) => c.tableId !== activeTableId);
     const removeSet = new Set([cellId, ...toRemove]);
     const target = fam.get(cellId);
     const newParentId = target ? target.parentId : null;
@@ -245,9 +272,17 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
       ? Math.max(...targetDesc.map((id) => (tableRows.find((c) => c.id === id)?.sortOrder ?? -Infinity)))
       : targetSo;
 
+    const siblingNames = new Set(siblings.map((c) => c.name));
+    let newName = '新指标';
+    if (siblingNames.has(newName)) {
+      let counter = 1;
+      while (siblingNames.has(`新指标${counter}`)) counter++;
+      newName = `新指标${counter}`;
+    }
+
     const newCell: CellDefinition = {
       id: `cell-${Date.now()}`,
-      name: '新指标',
+      name: newName,
       tableId: activeTableId,
       formula: '',
       type: CellType.Input,
@@ -300,22 +335,6 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
     onCellsChange([...otherRows, ...updatedRows]);
   };
 
-  const generateSummary = (cellId: string) => {
-    const tableRows = cellsWithCodes.filter((c) => c.tableId === activeTableId);
-    const target = tableRows.find((c) => c.id === cellId);
-    if (!target || !target.code) return;
-
-    const children = tableRows.filter(
-      (c) => c.parentId === cellId && c.code && c.code.startsWith(target.code + '.')
-    );
-    if (children.length === 0) return;
-
-    const childCodes = children.map((c) => c.code!);
-    const formula = generateSummaryFormula(childCodes);
-    updateCell(cellId, { formula, type: CellType.Formula });
-  };
-
-  // Build sibling family map
   const buildFamilies = (): Map<string, { parentId: string | null; children: string[] }> => {
     const tableRows = cellsWithCodes.filter((c) => c.tableId === activeTableId);
     const fam = new Map<string, { parentId: string | null; children: string[] }>();
@@ -335,7 +354,6 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
     return fam;
   };
 
-  // Get all descendants (recursive) of a cell
   const getDescendants = (fam: Map<string, { parentId: string | null; children: string[] }>, id: string): string[] => {
     const node = fam.get(id);
     if (!node) return [];
@@ -363,49 +381,47 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
 
   const isCollapsed = (code: string): boolean => collapsedCodes.has(code);
 
-  /**
-   * getCellDisplayValue: 获取单元格展示值
-   * 关键修改: 公式只显示在公式列，时间列不重复显示公式文本
-   */
   const getCellDisplayValue = (
     cell: CellDefinition,
     col: TimelineColumn,
     colContext: 'formula-column' | 'timeline'
   ): string => {
-    // 作用区间过滤
     if (cell.scope && cell.scope !== 'both') {
       if (cell.scope === 'construction' && col.period === 'operation') return '';
       if (cell.scope === 'operation' && col.period === 'construction') return '';
     }
 
-    // 如果是 Formula 类型，公式文本只在“公式”列显示，时间列永远空白
     if (cell.type === CellType.Formula || cell.type === CellType.Script) {
       if (colContext === 'formula-column') {
-        return cell.formula || '';
+        return formulaIdToDisplay(cell.formula, model);
       }
-      // timeline 列: Formula 类型永远返回空（不重复显示公式文本）
       if (colContext === 'timeline') {
-        // value 模式下尝试显示计算结果
-        if (viewMode === 'value') {
-          const resultVal = resultMap.get(`${cell.id}:${col.index}`);
-          return resultVal !== undefined && resultVal !== null ? String(resultVal) : '';
+        if (refErrorMap.has(`${cell.id}:${col.index}`)) return '#REF!';
+        const resultVal = resultMap.get(`${cell.id}:${col.index}`);
+        if (resultVal !== undefined && resultVal !== null) {
+          return formatNumber(resultVal, cell.precision);
         }
         return '';
       }
     }
 
-    // Input 类型
     if (cell.type === CellType.Input) {
       const arr = Array.isArray(cell.defaultValue) ? cell.defaultValue : [];
       const val = arr[col.index] ?? '';
-      return val !== undefined && val !== null ? String(val) : '';
+      if (val !== undefined && val !== null && val !== '') {
+        const numVal = Number(val);
+        if (!isNaN(numVal) && val !== '') {
+          return formatNumber(numVal, cell.precision);
+        }
+        return String(val);
+      }
+      return '';
     }
 
     return '';
   };
 
   const isCellEditable = (cell: CellDefinition, col: TimelineColumn): boolean => {
-    // Scope check: non-scoped cells cannot be edited
     if (cell.scope && cell.scope !== 'both') {
       if (cell.scope === 'construction' && col.period === 'operation') return false;
       if (cell.scope === 'operation' && col.period === 'construction') return false;
@@ -415,7 +431,6 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
   };
 
   const handleCellEdit = (cell: CellDefinition, col: TimelineColumn, rawValue: string) => {
-    // Scope check: prevent editing outside the cell's scope
     if (cell.scope && cell.scope !== 'both') {
       if (cell.scope === 'construction' && col.period === 'operation') return;
       if (cell.scope === 'operation' && col.period === 'construction') return;
@@ -429,7 +444,6 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
     updateCell(cell.id, { defaultValue: arr });
   };
 
-  // Drag handlers
   const handleDragStart = useCallback(
     (e: React.MouseEvent, colIndex: number) => {
       e.preventDefault();
@@ -494,40 +508,30 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
     fontSize: 12,
   });
 
+  const si = showIdColumn;
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <div style={{ marginBottom: 8, display: 'flex', gap: 8, alignItems: 'center' }}>
         <span style={{ fontSize: 12, color: '#666' }}>
           共 {tableCells.length} 个指标，{columns.length} 个时间列
+          {hasResults ? ' · 已计算' : ''}
         </span>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
           <button
-            onClick={() => setViewMode('formula')}
+            onClick={() => setShowIdColumn(!showIdColumn)}
             style={{
               padding: '4px 10px',
               fontSize: 12,
               border: '1px solid #ddd',
-              background: viewMode === 'formula' ? '#1976d2' : '#fff',
-              color: viewMode === 'formula' ? '#fff' : '#666',
+              background: showIdColumn ? '#1976d2' : '#fff',
+              color: showIdColumn ? '#fff' : '#666',
               borderRadius: 4,
               cursor: 'pointer',
+              fontFamily: 'monospace',
             }}
           >
-            显示公式
-          </button>
-          <button
-            onClick={() => setViewMode('value')}
-            style={{
-              padding: '4px 10px',
-              fontSize: 12,
-              border: '1px solid #ddd',
-              background: viewMode === 'value' ? '#1976d2' : '#fff',
-              color: viewMode === 'value' ? '#fff' : '#666',
-              borderRadius: 4,
-              cursor: 'pointer',
-            }}
-          >
-            显示计算值
+            ID
           </button>
         </div>
       </div>
@@ -546,31 +550,37 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
           <thead>
             <tr>
               {/* 1. Code */}
-              <th style={fixedHeaderStyle(CODE_LEFT, CODE_COL_WIDTH)}>
+              <th style={fixedHeaderStyle(colLeft(si, 'code'), CODE_COL_WIDTH)}>
                 编码
               </th>
-              {/* 2. Name */}
-              <th style={fixedHeaderStyle(NAME_LEFT, NAME_COL_WIDTH)}>
+              {/* 2. ID (conditional) */}
+              {si && (
+                <th style={fixedHeaderStyle(colLeft(si, 'id'), ID_COL_WIDTH)}>
+                  ID
+                </th>
+              )}
+              {/* 3. Name */}
+              <th style={fixedHeaderStyle(colLeft(si, 'name'), NAME_COL_WIDTH)}>
                 名称
               </th>
-              {/* 3. Actions (MOVED HERE) */}
-              <th style={fixedHeaderStyle(ACTION_LEFT, ACTION_COL_WIDTH)}>
+              {/* 4. Actions */}
+              <th style={fixedHeaderStyle(colLeft(si, 'action'), ACTION_COL_WIDTH)}>
                 操作
               </th>
-              {/* 4. Type */}
-              <th style={fixedHeaderStyle(TYPE_LEFT, TYPE_COL_WIDTH)}>
+              {/* 5. Type */}
+              <th style={fixedHeaderStyle(colLeft(si, 'type'), TYPE_COL_WIDTH)}>
                 类型
               </th>
-              {/* 5. Unit */}
-              <th style={fixedHeaderStyle(UNIT_LEFT, UNIT_COL_WIDTH)}>
+              {/* 6. Unit */}
+              <th style={fixedHeaderStyle(colLeft(si, 'unit'), UNIT_COL_WIDTH)}>
                 单位
               </th>
-              {/* 6. Formula */}
-              <th style={fixedHeaderStyle(FORMULA_LEFT, FORMULA_COL_WIDTH)}>
+              {/* 7. Formula */}
+              <th style={fixedHeaderStyle(colLeft(si, 'formula'), FORMULA_COL_WIDTH)}>
                 公式
               </th>
-              {/* 7. Scope */}
-              <th style={fixedHeaderStyle(SCOPE_LEFT, SCOPE_COL_WIDTH)}>
+              {/* 8. Scope */}
+              <th style={fixedHeaderStyle(colLeft(si, 'scope'), SCOPE_COL_WIDTH)}>
                 作用区间
               </th>
 
@@ -619,7 +629,7 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
             {displayCells.map((cell) => (
               <tr key={cell.id}>
                 {/* 1. Code */}
-                <td style={fixedCellStyle(CODE_LEFT, CODE_COL_WIDTH)}>
+                <td style={fixedCellStyle(colLeft(si, 'code'), CODE_COL_WIDTH)}>
                   {hasChildren(cell.id) ? (
                     <span
                       onClick={() => toggleCollapse(cell.code!)}
@@ -633,10 +643,22 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
                   {cell.code || '-'}
                 </td>
 
-                {/* 2. Name with indent */}
+                {/* 2. ID (conditional) */}
+                {si && (
+                  <td style={{
+                    ...fixedCellStyle(colLeft(si, 'id'), ID_COL_WIDTH),
+                    fontSize: 10,
+                    color: '#888',
+                    fontFamily: 'monospace',
+                  }}>
+                    {cell.id}
+                  </td>
+                )}
+
+                {/* 3. Name with indent */}
                 <td
                   style={{
-                    ...fixedCellStyle(NAME_LEFT, NAME_COL_WIDTH),
+                    ...fixedCellStyle(colLeft(si, 'name'), NAME_COL_WIDTH),
                     paddingLeft: `${8 + (codeDepth(cell.code) - 1) * 16}px`,
                   }}
                 >
@@ -653,8 +675,8 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
                   />
                 </td>
 
-                {/* 3. Actions */}
-                <td style={fixedCellStyle(ACTION_LEFT, ACTION_COL_WIDTH)}>
+                {/* 4. Actions */}
+                <td style={fixedCellStyle(colLeft(si, 'action'), ACTION_COL_WIDTH)}>
                   <button
                     onClick={() => indentCell(cell.id)}
                     title="缩进 (设为子级)"
@@ -697,22 +719,6 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
                   >
                     +
                   </button>
-                  {hasChildren(cell.id) && (
-                    <button
-                      onClick={() => generateSummary(cell.id)}
-                      title="一键生成子级汇总公式"
-                      style={{
-                        color: '#2e7d32',
-                        background: 'none',
-                        border: 'none',
-                        cursor: 'pointer',
-                        fontSize: 13,
-                        marginRight: 2,
-                      }}
-                    >
-                      Σ
-                    </button>
-                  )}
                   <button
                     onClick={() => removeCell(cell.id)}
                     title="删除"
@@ -728,8 +734,8 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
                   </button>
                 </td>
 
-                {/* 4. Type */}
-                <td style={fixedCellStyle(TYPE_LEFT, TYPE_COL_WIDTH)}>
+                {/* 5. Type */}
+                <td style={fixedCellStyle(colLeft(si, 'type'), TYPE_COL_WIDTH)}>
                   <select
                     value={cell.type}
                     onChange={(e) => updateCell(cell.id, { type: e.target.value as CellType })}
@@ -743,8 +749,8 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
                   </select>
                 </td>
 
-                {/* 5. Unit */}
-                <td style={fixedCellStyle(UNIT_LEFT, UNIT_COL_WIDTH)}>
+                {/* 6. Unit */}
+                <td style={fixedCellStyle(colLeft(si, 'unit'), UNIT_COL_WIDTH)}>
                   <input
                     value={cell.unit || ''}
                     onChange={(e) => updateCell(cell.id, { unit: e.target.value })}
@@ -758,8 +764,8 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
                   />
                 </td>
 
-                {/* 6. Formula (compact badge + click to open modal) */}
-                <td style={fixedCellStyle(FORMULA_LEFT, FORMULA_COL_WIDTH)}>
+                {/* 7. Formula */}
+                <td style={fixedCellStyle(colLeft(si, 'formula'), FORMULA_COL_WIDTH)}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
                     {cell.type === CellType.Formula || cell.type === CellType.Script ? (
                       <FormulaEditor
@@ -793,8 +799,8 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
                   );
                 })()}
 
-                {/* 7. Scope */}
-                <td style={fixedCellStyle(SCOPE_LEFT, SCOPE_COL_WIDTH)}>
+                {/* 8. Scope */}
+                <td style={fixedCellStyle(colLeft(si, 'scope'), SCOPE_COL_WIDTH)}>
                   {cell.type === CellType.Formula || cell.type === CellType.Script ? (
                     <select
                       value={cell.scope ?? 'both'}
@@ -810,12 +816,13 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
                   )}
                 </td>
 
-                {/* Timeline cells - Formula text NEVER shown here */}
+                {/* Timeline cells */}
                 {columns.map((col, idx) => {
                   const isEditing =
                     editingCell?.cellId === cell.id && editingCell?.colIndex === col.index;
                   const displayValue = getCellDisplayValue(cell, col, 'timeline');
                   const canEdit = isCellEditable(cell, col);
+                  const isError = refErrorMap.has(`${cell.id}:${col.index}`);
 
                   return (
                     <td
@@ -872,21 +879,24 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
                       ) : (
                         <span
                           style={{
-                            color:
-                              cell.type === CellType.Formula || cell.type === CellType.Script
+                            color: isError
+                              ? '#d32f2f'
+                              : cell.type === CellType.Formula || cell.type === CellType.Script
                                 ? '#666'
                                 : '#333',
-                            fontStyle:
-                              cell.type === CellType.Formula || cell.type === CellType.Script
+                            fontStyle: isError
+                              ? 'normal'
+                              : cell.type === CellType.Formula || cell.type === CellType.Script
                                 ? 'italic'
                                 : 'normal',
+                            fontWeight: isError ? 600 : 'normal',
                             cursor: canEdit ? 'text' : 'default',
                             display: 'block',
                             overflow: 'hidden',
                             textOverflow: 'ellipsis',
                             whiteSpace: 'nowrap',
                           }}
-                          title={displayValue}
+                          title={isError ? '引用了已删除的指标' : displayValue}
                         >
                           {displayValue}
                         </span>
@@ -900,7 +910,7 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
             {displayCells.length === 0 && (
               <tr>
                 <td
-                  colSpan={7 + columns.length}
+                  colSpan={fixedColsCount(si) + columns.length}
                   style={{
                     padding: 32,
                     textAlign: 'center',

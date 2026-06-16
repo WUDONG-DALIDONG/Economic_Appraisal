@@ -1,8 +1,173 @@
 import { CellDefinition, ParameterDefinition } from '../types';
 
-/**
- * Build simple code->path map for parameters (similar to buildCellMaps but for params).
- */
+function buildCellIdMaps(
+  cells: CellDefinition[],
+  tables: { id: string; name: string }[]
+) {
+  const idToCell = new Map(cells.map(c => [c.id, c]));
+  const idToTableName = new Map<string, string>();
+  for (const c of cells) {
+    idToTableName.set(c.id, tables.find(t => t.id === c.tableId)?.name ?? c.tableId);
+  }
+
+  const idToPath = new Map<string, string>();
+  for (const c of cells) {
+    const tblName = idToTableName.get(c.id) ?? '';
+    const parts: string[] = [];
+    let curId: string | null = c.id;
+    while (curId) {
+      const cc = idToCell.get(curId);
+      if (!cc) break;
+      parts.unshift(cc.name);
+      curId = cc.parentId ?? null;
+    }
+    idToPath.set(c.id, `${tblName}.${parts.join('.')}`);
+  }
+
+  const pathToId = new Map<string, string>();
+  for (const [id, path] of idToPath.entries()) {
+    pathToId.set(path, id);
+  }
+
+  return { idToPath, pathToId, idToCell, idToTableName };
+}
+
+function buildParamIdMaps(parameters: ParameterDefinition[]) {
+  const idToParam = new Map(parameters.map(p => [p.id, p]));
+
+  const idToPath = new Map<string, string>();
+  for (const p of parameters) {
+    const parts: string[] = [];
+    let curId: string | null = p.id;
+    while (curId) {
+      const pp = idToParam.get(curId);
+      if (!pp) break;
+      parts.unshift(pp.name);
+      curId = pp.parentId ?? null;
+    }
+    idToPath.set(p.id, `参数.${parts.join('.')}`);
+  }
+
+  const pathToId = new Map<string, string>();
+  for (const [id, path] of idToPath.entries()) {
+    pathToId.set(path, id);
+  }
+
+  return { idToPath, pathToId, idToParam };
+}
+
+export function formulaIdToDisplay(
+  formula: string,
+  model: {
+    cells: CellDefinition[];
+    tables: { id: string; name: string }[];
+    parameters: ParameterDefinition[];
+  }
+): string {
+  if (!formula) return '';
+  const { idToPath: cellIdToPath } = buildCellIdMaps(model.cells, model.tables);
+  const { idToPath: paramIdToPath } = buildParamIdMaps(model.parameters);
+
+  return formula.replace(
+    /@\{([^}]+)\}/g,
+    (match, id: string) => {
+      const cellPath = cellIdToPath.get(id);
+      if (cellPath) return cellPath;
+      const paramPath = paramIdToPath.get(id);
+      if (paramPath) return paramPath;
+      return match;
+    }
+  );
+}
+
+export function formulaDisplayToId(
+  displayFormula: string,
+  model: {
+    cells: CellDefinition[];
+    tables: { id: string; name: string }[];
+    parameters: ParameterDefinition[];
+  }
+): string {
+  if (!displayFormula) return displayFormula;
+  const { pathToId: cellPathToId } = buildCellIdMaps(model.cells, model.tables);
+  const { pathToId: paramPathToId } = buildParamIdMaps(model.parameters);
+
+  const tableNames = new Set(model.tables.map(t => t.name));
+
+  let result = '';
+  let i = 0;
+
+  while (i < displayFormula.length) {
+    if (!/[\w\u4e00-\u9fff]/.test(displayFormula[i])) {
+      result += displayFormula[i];
+      i++;
+      continue;
+    }
+
+    let j = i;
+    while (j < displayFormula.length && /[\w\u4e00-\u9fff]/.test(displayFormula[j])) {
+      j++;
+    }
+    const word1 = displayFormula.slice(i, j);
+
+    if ((tableNames.has(word1) || word1 === '参数') && j < displayFormula.length && displayFormula[j] === '.') {
+      let restStart = j + 1;
+      let k = restStart;
+      let bestPath: string | null = null;
+      let bestId: string | null = null;
+      let bestEnd = restStart - 1;
+
+      while (k < displayFormula.length) {
+        while (k < displayFormula.length && /[\w\u4e00-\u9fff]/.test(displayFormula[k])) {
+          k++;
+        }
+        const candidatePath = word1 + '.' + displayFormula.slice(restStart, k);
+
+        const cellId = cellPathToId.get(candidatePath);
+        if (cellId) {
+          bestPath = candidatePath;
+          bestId = cellId;
+          bestEnd = k;
+        }
+
+        const paramId = paramPathToId.get(candidatePath);
+        if (paramId) {
+          bestPath = candidatePath;
+          bestId = paramId;
+          bestEnd = k;
+        }
+
+        if (k < displayFormula.length && displayFormula[k] === '.') {
+          k++;
+          continue;
+        }
+        break;
+      }
+
+      if (bestId) {
+        result += `@{${bestId}}`;
+        i = bestEnd;
+        continue;
+      }
+
+      const codeRegex = /^\d+(?:\.\d+)*$/;
+      const afterDot = displayFormula.slice(restStart, k);
+      if (codeRegex.test(afterDot)) {
+        result += word1 + '.' + afterDot;
+        i = k;
+        continue;
+      }
+    }
+
+    result += word1;
+    i = j;
+  }
+
+  return result;
+}
+
+// Legacy code-based functions (kept for backward compat during transition)
+
 function buildParamMaps(parameters: ParameterDefinition[]) {
   const codeToName = new Map(parameters.map(p => [p.code, p.name]).filter(([c]) => c) as [string, string][]);
   const codeToParentId = new Map(parameters.map(p => [p.code, p.parentId ?? null]).filter(([c]) => c) as [string, string | null][]);
@@ -25,7 +190,6 @@ function buildParamMaps(parameters: ParameterDefinition[]) {
     codeToPath.set(p.code, parts.join('.'));
   }
 
-  // path -> code reverse map
   const pathToCode = new Map<string, string>();
   for (const [code, path] of codeToPath.entries()) {
     pathToCode.set(path, code);
@@ -34,12 +198,6 @@ function buildParamMaps(parameters: ParameterDefinition[]) {
   return { codeToPath, pathToCode, codeToId };
 }
 
-/**
- * Build reverse lookup maps:
- *  - codeToPath:   code -> "表.父.子" display path
- *  - codeToName:   code -> leaf cell name
- *  - nameToCodes:  cell name -> codes[] (multiple cells may share same name)
- */
 function buildCellMaps(
   cells: CellDefinition[],
   tables: { id: string; name: string }[]
@@ -58,7 +216,6 @@ function buildCellMaps(
     nameToCodes.set(c.name, arr);
   }
 
-  // Build full display path per code
   const codeToPath = new Map<string, string>();
   for (const c of cells) {
     const tblName = codeToTableName.get(c.code) ?? '';
@@ -77,25 +234,6 @@ function buildCellMaps(
   return { nameToCodes, codeToName, codeToPath, codeToTableName };
 }
 
-/**
- * Build simple name->code map for parameters (parameters have no hierarchy/codes)
- */
-function buildParamMap(parameters: ParameterDefinition[]) {
-  const map = new Map<string, string>();
-  const dupeCounts = new Map<string, number>();
-  for (const p of parameters) {
-    map.set(p.name, p.id); // param reference is just id internally – actually param refs stored as name in formulas
-  }
-  return map;
-}
-
-/**
- * Convert a stored formula (using cell codes) to a human-displayable formula
- * using full hierarchical paths.
- *
- * E.g.: "=3.2.2 + 参数.1.2"
- *   -> "=资金筹措表.资金来源.债务资金.用于建设期利息 + 参数.总投资.建设投资"
- */
 export function formulaCodeToDisplay(
   formula: string,
   model: {
@@ -108,17 +246,11 @@ export function formulaCodeToDisplay(
   const { codeToPath } = buildCellMaps(model.cells, model.tables);
   const { codeToPath: paramCodeToPath } = buildParamMaps(model.parameters);
 
-  // Tokenize: table.code pattern  OR  参数.name pattern
-  // Simple regex split preserving delimiters:
-  // We replace occurrences of "表名.code" and "参数.名称"
   let result = formula;
 
-  // Replace cell refs: table.code (where code is dot-separated digits)
-  // Pattern: word chars (table name) followed by '.' then digit-based code
   result = result.replace(
     new RegExp('([\\w\\u4e00-\\u9fff]+)\\.((?:\\d+(?:\\.\\d+)*))', 'g'),
     (match, tblName, code) => {
-      // Parameter ref: "参数.1.2"
       if (tblName === '参数') {
         const paramPath = paramCodeToPath.get(code);
         return paramPath ? `参数.${paramPath}` : match;
@@ -131,17 +263,6 @@ export function formulaCodeToDisplay(
   return result;
 }
 
-/**
- * Convert a human-entered formula (with full paths or names) back to stored
- * code-based formula.
- *
- * Rules:
- *  1. "表名.完整.路径" -> find the cell whose path == full path -> use its code
- *  2. "表名.code"      -> pass through if code found in model
- *  3. "表名.简单名称"   -> if ambiguous, use first matching code (backward compat)
- *  4. "参数.名称"       -> convert to path segments -> find code -> store as 参数.code
- *  5. "参数.code"       -> pass through (parameter refs stored as code paths)
- */
 export function formulaDisplayToCode(
   displayFormula: string,
   model: {
@@ -154,55 +275,40 @@ export function formulaDisplayToCode(
   const { nameToCodes, codeToPath, codeToTableName } = buildCellMaps(model.cells, model.tables);
   const { codeToPath: paramCodeToPath, pathToCode: paramPathToCode } = buildParamMaps(model.parameters);
 
-  // Build reverse: path -> code
   const pathToCode = new Map<string, string>();
   for (const [code, path] of codeToPath.entries()) {
     pathToCode.set(path, code);
   }
 
-  // Build table name list (for detecting table refs)
   const tableNames = new Set(model.tables.map(t => t.name));
 
-  // We'll do a simple token scan.
-  // Algorithm: scan from left to right. Whenever we see a word that matches
-  // a table name, check if the next tokens (joined by '.') form a full path.
-  // If yes, replace with code. Otherwise leave as-is.
   let result = '';
   let i = 0;
 
   while (i < displayFormula.length) {
-    // Skip anything that's not a word start ( letter/数字/中文 )
     if (!/[\w\u4e00-\u9fff]/.test(displayFormula[i])) {
       result += displayFormula[i];
       i++;
       continue;
     }
 
-    // Read the next word
     let j = i;
     while (j < displayFormula.length && /[\w\u4e00-\u9fff]/.test(displayFormula[j])) {
       j++;
     }
     const word1 = displayFormula.slice(i, j);
 
-    // Check if it's a table name followed by '.'
     if ((tableNames.has(word1) || word1 === '参数') && j < displayFormula.length && displayFormula[j] === '.') {
-      // This is a "表名." or "参数." prefix — try to find the longest matching path
-      let restStart = j + 1; // after the first '.'
+      let restStart = j + 1;
       let k = restStart;
-      // Read subsequent segments split by dots, building candidate paths
       let bestPath: string | null = null;
-      let bestEnd = restStart - 1; // exclusive end index
+      let bestEnd = restStart - 1;
 
-      // We scan dot-separated segments starting from table name prefix
-      // The full path is: tableName + '.' + segment1 + '.' + segment2 + ...
       let lastSegEnd = restStart;
       while (k < displayFormula.length) {
-        // skip to next dot or non-word
         while (k < displayFormula.length && /[\w\u4e00-\u9fff]/.test(displayFormula[k])) {
           k++;
         }
-        // segment [lastSegEnd, k)
         const candidatePath = word1 + '.' + displayFormula.slice(restStart, k);
         if (pathToCode.has(candidatePath)) {
           bestPath = candidatePath;
@@ -212,7 +318,6 @@ export function formulaDisplayToCode(
           bestPath = word1 + '.' + displayFormula.slice(restStart, k);
           bestEnd = k;
         }
-        // continue scanning for deeper matches
         if (k < displayFormula.length && displayFormula[k] === '.') {
           lastSegEnd = k + 1;
           k++;
@@ -221,7 +326,6 @@ export function formulaDisplayToCode(
         break;
       }
 
-      // If we found a deep path match, replace it entirely
       if (bestPath) {
         if (word1 === '参数') {
           const paramPathSegment = bestPath.slice(word1.length + 1);
@@ -238,30 +342,22 @@ export function formulaDisplayToCode(
         continue;
       }
 
-      // No deep path match — check if it's a bare code reference like "表名.1.2"
-      // This is case: user typed code directly — we should preserve table.code form
-      // Detect: word1 '.' digit(s) [ '.' digit(s) ]*
       const codeRegex = /^\d+(?:\.\d+)*$/;
       const afterDot = displayFormula.slice(restStart, k);
       if (codeRegex.test(afterDot)) {
-        // Preserve as table.code
         result += word1 + '.' + afterDot;
         i = k;
         continue;
       }
 
-      // Otherwise it's a legacy bare name reference: e.g. "表名.名称"
-      // Try to map to a code using nameToCodes (first match for backward compat)
       const codes = nameToCodes.get(afterDot);
       if (codes && codes.length > 0) {
         result += word1 + '.' + codes[0];
         i = k;
         continue;
       }
-      // Could not resolve — fallthrough to raw word
     }
 
-    // Not a table reference, or not followed by '.', or unresolved
     result += word1;
     i = j;
   }
@@ -269,19 +365,10 @@ export function formulaDisplayToCode(
   return result;
 }
 
-/**
- * Normalize a formula string for display or storage.
- * Removes leading '=' if present.
- */
 export function normalizeFormula(formula: string): string {
   return formula.startsWith('=') ? formula.slice(1) : formula;
 }
 
-/**
- * Given a formula and model metadata, determine if it contains any
- * ambiguous cell name references (multiple cells share same name).
- * Returns list of ambiguous names with matching codes.
- */
 export function findAmbiguousRefs(
   formula: string,
   model: {
@@ -307,10 +394,6 @@ function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-/**
- * Given a cell code, return its full hierarchical display path for the formula column.
- * E.g. code="3.2.2" -> "资金筹措表.资金来源.债务资金.用于建设期利息"
- */
 export function getCellDisplayPath(
   code: string,
   model: {
@@ -320,4 +403,15 @@ export function getCellDisplayPath(
 ): string | null {
   const { codeToPath } = buildCellMaps(model.cells, model.tables);
   return codeToPath.get(code) ?? null;
+}
+
+export function getCellDisplayPathById(
+  id: string,
+  model: {
+    cells: CellDefinition[];
+    tables: { id: string; name: string }[];
+  }
+): string | null {
+  const { idToPath } = buildCellIdMaps(model.cells, model.tables);
+  return idToPath.get(id) ?? null;
 }

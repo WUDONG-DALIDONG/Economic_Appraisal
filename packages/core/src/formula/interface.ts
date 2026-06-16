@@ -5,6 +5,7 @@ export enum TokenType {
   Identifier = 'Identifier',
   Table = 'Table',
   Field = 'Field',
+  IdRef = 'IdRef',
   Operator = 'Operator',
   LParen = 'LParen',
   RParen = 'RParen',

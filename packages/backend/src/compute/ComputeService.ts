@@ -6,6 +6,7 @@ import { ASTCompiler } from '@economic/executor/src/compiler/ASTCompiler';
 import { SafeVM } from '@economic/executor/src/vm/SafeVM';
 import { ResultRepository } from '../repository/ResultRepository.js';
 import { collectDependencies } from '@economic/core/src/dag/dependencyExtractor.js';
+import { buildDAG } from '@economic/core/src/dag/engine.js';
 import type { Database } from 'better-sqlite3';
 
 export interface ComputeResult {
@@ -43,11 +44,17 @@ export class ComputeService {
 
   constructor(private db: Database.Database) {}
 
+  private static readonly MAX_ITERATIONS = 100;
+  private static readonly CONVERGENCE_THRESHOLD = 0.01;
+
   compute(model: ModelDefinition): ComputeResult {
     const start = Date.now();
     const resultRepo = new ResultRepository(this.db);
     const errors: ComputeResult['errors'] = [];
     const results: ComputeResult['results'] = [];
+
+    // Clear stale results to ensure clean computation
+    resultRepo.deleteByModel(model.id);
 
     const cellMap = new Map(model.cells.map(c => [c.id, c]));
     const paramMap = new Map(model.parameters.map(p => [p.id, p]));
@@ -60,16 +67,81 @@ export class ComputeService {
     // Step 1: evaluate derived parameters (param -> param only)
     const paramValues = this.evaluateDerivedParameters(model.parameters);
 
-    // Step 2: compute all formula cells
-    for (const cell of model.cells) {
-      if (cell.type !== CellType.Formula || !cell.formula.trim()) continue;
+    // Step 2: build cell DAG and topologically sort
+    const dag = buildDAG(
+      model.cells,
+      (table, field) => {
+        if (table === '@') return field;
+        return this.resolveCellId(table, field, model, tableNameToId);
+      },
+      collectDependencies
+    );
 
-      // Every cell is processed as an array across all time indices
-      const timeRange = Array.from({ length: maxTime + 1 }, (_, i) => i);
+    // Remove self-references (e.g. [t-1] cumulative formulas) to avoid false cycles
+    for (const [id, node] of dag.nodes) {
+      node.dependencies = node.dependencies.filter(depId => depId !== id);
+      node.dependents = node.dependents.filter(depId => depId !== id);
+    }
+
+    // Topological sort after removing self-loops
+    const orderedCellIds = this.topologicalSort(dag.nodes);
+
+    if (orderedCellIds !== null) {
+      // No cycle — normal computation path
+      this.computeCellsInOrder(orderedCellIds, cellMap, paramValues, paramMap, resultRepo, model, tableNameToId, constructionCols, maxTime, errors, results);
+    } else {
+      // Cycle detected — iterative convergence path
+      const nonCycleIds = this.getNonCycleIds(dag.nodes);
+      const cycleIds = this.getCycleIds(dag.nodes);
+
+      // Step 3a: compute non-cycle cells in topological order first
+      if (nonCycleIds.length > 0) {
+        const nonCycleOrdered = this.topologicalSortFiltered(dag.nodes, new Set(nonCycleIds));
+        if (nonCycleOrdered) {
+          this.computeCellsInOrder(nonCycleOrdered, cellMap, paramValues, paramMap, resultRepo, model, tableNameToId, constructionCols, maxTime, errors, results);
+        }
+      }
+
+      // Step 3b: iterative computation for cycle cells
+      this.computeCycleIteratively(
+        cycleIds, dag.nodes, cellMap, paramValues, paramMap, resultRepo,
+        model, tableNameToId, constructionCols, maxTime, errors, results
+      );
+    }
+
+    return {
+      cellCount: model.cells.filter(c => c.type === CellType.Formula && c.formula.trim()).length,
+      maxTimeIndex: maxTime,
+      durationMs: Date.now() - start,
+      errors,
+      results,
+    };
+  }
+
+  /**
+   * Compute a list of cell IDs in the given order (topological).
+   * Shared by normal path and iterative path.
+   */
+  private computeCellsInOrder(
+    orderedCellIds: string[],
+    cellMap: Map<string, ModelDefinition['cells'][number]>,
+    paramValues: Map<string, unknown>,
+    paramMap: Map<string, ParameterDefinition>,
+    resultRepo: ResultRepository,
+    model: ModelDefinition,
+    tableNameToId: Map<string, string>,
+    constructionCols: number,
+    maxTime: number,
+    errors: ComputeResult['errors'],
+    results: ComputeResult['results']
+  ): void {
+    const timeRange = Array.from({ length: maxTime + 1 }, (_, i) => i);
+
+    for (const cellId of orderedCellIds) {
+      const cell = cellMap.get(cellId);
+      if (!cell || cell.type !== CellType.Formula || !cell.formula.trim()) continue;
 
       for (const t of timeRange) {
-        // Scope check: if cell is scoped to a specific period and current t
-        // is outside that period, save 0 and skip computation
         if (!this.isInScope(cell.scope, t, constructionCols)) {
           resultRepo.save(cell.id, model.id, t, 0);
           results.push({ cellId: cell.id, timeIndex: t, value: 0 });
@@ -83,9 +155,15 @@ export class ComputeService {
             t, cellMap, paramValues, paramMap, resultRepo, cell.id, model.id, tableNameToId, constructionCols, model.parameters
           );
           const result = this.vm.execute(jsCode, { ctx });
-          const numericResult = typeof result === 'number' ? result : null;
-          resultRepo.save(cell.id, model.id, t, numericResult);
-          results.push({ cellId: cell.id, timeIndex: t, value: numericResult });
+          if (result === '#REF!') {
+            errors.push({ cellId: cell.id, timeIndex: t, error: '#REF! - 引用了已删除的指标' });
+            resultRepo.save(cell.id, model.id, t, null);
+            results.push({ cellId: cell.id, timeIndex: t, value: null });
+          } else {
+            const numericResult = typeof result === 'number' ? result : null;
+            resultRepo.save(cell.id, model.id, t, numericResult);
+            results.push({ cellId: cell.id, timeIndex: t, value: numericResult });
+          }
         } catch (e: any) {
           errors.push({ cellId: cell.id, timeIndex: t, error: e.message });
           resultRepo.save(cell.id, model.id, t, null);
@@ -93,14 +171,230 @@ export class ComputeService {
         }
       }
     }
+  }
 
-    return {
-      cellCount: model.cells.filter(c => c.type === CellType.Formula && c.formula.trim()).length,
-      maxTimeIndex: maxTime,
-      durationMs: Date.now() - start,
-      errors,
-      results,
-    };
+  /**
+   * Iterative computation for cells involved in dependency cycles.
+   * 
+   * Algorithm:
+   * 1. Seed cycle cells with initial values (defaultValue or 0)
+   * 2. Repeatedly compute cycle cells in dependency order
+   * 3. After each full pass, check if results have converged
+   * 4. Stop when max difference < threshold, or max iterations reached
+   */
+  private computeCycleIteratively(
+    cycleIds: string[],
+    dagNodes: Map<string, { cellId: string; dependencies: string[]; dependents: string[] }>,
+    cellMap: Map<string, ModelDefinition['cells'][number]>,
+    paramValues: Map<string, unknown>,
+    paramMap: Map<string, ParameterDefinition>,
+    resultRepo: ResultRepository,
+    model: ModelDefinition,
+    tableNameToId: Map<string, string>,
+    constructionCols: number,
+    maxTime: number,
+    errors: ComputeResult['errors'],
+    results: ComputeResult['results']
+  ): void {
+    const timeRange = Array.from({ length: maxTime + 1 }, (_, i) => i);
+    const cycleSet = new Set(cycleIds);
+
+    // Determine computation order within cycle: sort by dependency depth
+    // (cells with fewer in-cycle deps first)
+    const cycleOrdered = this.sortCycleCells(cycleIds, dagNodes, cycleSet);
+
+    // Seed initial values for cycle cells
+    for (const cellId of cycleIds) {
+      const cell = cellMap.get(cellId);
+      if (!cell) continue;
+
+      for (const t of timeRange) {
+        if (!this.isInScope(cell.scope, t, constructionCols)) {
+          resultRepo.save(cell.id, model.id, t, 0);
+          continue;
+        }
+
+        // Use defaultValue as seed, or 0 if unavailable
+        const dv = cell.defaultValue ?? 0;
+        let seedValue = 0;
+        if (Array.isArray(dv) && t < dv.length) {
+          seedValue = dv[t] ?? 0;
+        } else if (typeof dv === 'number') {
+          seedValue = dv;
+        }
+
+        resultRepo.save(cell.id, model.id, t, seedValue);
+      }
+    }
+
+    // Iterative convergence loop
+    let iteration = 0;
+    let converged = false;
+
+    while (iteration < ComputeService.MAX_ITERATIONS && !converged) {
+      iteration++;
+      converged = true;
+
+      for (const cellId of cycleOrdered) {
+        const cell = cellMap.get(cellId);
+        if (!cell || cell.type !== CellType.Formula || !cell.formula.trim()) continue;
+
+        for (const t of timeRange) {
+          if (!this.isInScope(cell.scope, t, constructionCols)) continue;
+
+          try {
+            const ast = parse(cell.formula);
+            const jsCode = this.compiler.compile(ast);
+            const ctx = this.buildContext(
+              t, cellMap, paramValues, paramMap, resultRepo, cell.id, model.id, tableNameToId, constructionCols, model.parameters
+            );
+            const result = this.vm.execute(jsCode, { ctx });
+
+            if (result === '#REF!') {
+              errors.push({ cellId: cell.id, timeIndex: t, error: '#REF! - 引用了已删除的指标' });
+              resultRepo.save(cell.id, model.id, t, null);
+              continue;
+            }
+
+            const numericResult = typeof result === 'number' ? result : null;
+
+            // Check convergence: compare with previous value
+            const prevResults = resultRepo.findByCell(cell.id);
+            const prev = prevResults.find(r => r.timeIndex === t && r.modelId === model.id);
+            const prevValue = prev?.value ?? 0;
+            const newValue = numericResult ?? 0;
+
+            if (Math.abs(newValue - prevValue) > ComputeService.CONVERGENCE_THRESHOLD) {
+              converged = false;
+            }
+
+            resultRepo.save(cell.id, model.id, t, numericResult);
+          } catch (e: any) {
+            errors.push({ cellId: cell.id, timeIndex: t, error: e.message });
+            resultRepo.save(cell.id, model.id, t, null);
+          }
+        }
+      }
+    }
+
+    // Collect final results for cycle cells
+    for (const cellId of cycleIds) {
+      const cell = cellMap.get(cellId);
+      if (!cell || cell.type !== CellType.Formula || !cell.formula.trim()) continue;
+
+      for (const t of timeRange) {
+        const stored = resultRepo.findByCell(cell.id);
+        const found = stored.find(r => r.timeIndex === t && r.modelId === model.id);
+        results.push({ cellId: cell.id, timeIndex: t, value: found?.value ?? null });
+      }
+    }
+
+    // Add convergence warning if not fully converged
+    if (!converged) {
+      errors.push({
+        cellId: cycleIds[0],
+        timeIndex: 0,
+        error: `循环依赖迭代未收敛（${iteration}次迭代），结果可能不精确`
+      });
+    }
+  }
+
+  /**
+   * Get cell IDs that are NOT part of any dependency cycle.
+   */
+  private getNonCycleIds(nodes: Map<string, { cellId: string; dependencies: string[]; dependents: string[] }>): string[] {
+    const inDegree = new Map<string, number>();
+    const adjList = new Map<string, string[]>();
+
+    for (const [id, node] of nodes) {
+      inDegree.set(id, node.dependencies.length);
+      adjList.set(id, [...node.dependents]);
+    }
+
+    const queue: string[] = [];
+    for (const [id, deg] of inDegree) {
+      if (deg === 0) queue.push(id);
+    }
+
+    const nonCycle: string[] = [];
+    while (queue.length > 0) {
+      const id = queue.shift()!;
+      nonCycle.push(id);
+      for (const dependent of adjList.get(id) || []) {
+        const newDeg = (inDegree.get(dependent) || 0) - 1;
+        inDegree.set(dependent, newDeg);
+        if (newDeg === 0) queue.push(dependent);
+      }
+    }
+
+    return nonCycle;
+  }
+
+  /**
+   * Get cell IDs that ARE part of a dependency cycle.
+   */
+  private getCycleIds(nodes: Map<string, { cellId: string; dependencies: string[]; dependents: string[] }>): string[] {
+    const nonCycle = new Set(this.getNonCycleIds(nodes));
+    const cycleIds: string[] = [];
+    for (const [id] of nodes) {
+      if (!nonCycle.has(id)) cycleIds.push(id);
+    }
+    return cycleIds;
+  }
+
+  /**
+   * Topological sort for a subset of nodes (filtered by allowedIds).
+   */
+  private topologicalSortFiltered(
+    nodes: Map<string, { cellId: string; dependencies: string[]; dependents: string[] }>,
+    allowedIds: Set<string>
+  ): string[] | null {
+    const inDegree = new Map<string, number>();
+    const adjList = new Map<string, string[]>();
+
+    for (const id of allowedIds) {
+      const node = nodes.get(id);
+      if (!node) continue;
+      const filteredDeps = node.dependencies.filter(d => allowedIds.has(d));
+      const filteredDependents = node.dependents.filter(d => allowedIds.has(d));
+      inDegree.set(id, filteredDeps.length);
+      adjList.set(id, filteredDependents);
+    }
+
+    const queue: string[] = [];
+    for (const [id, deg] of inDegree) {
+      if (deg === 0) queue.push(id);
+    }
+
+    const ordered: string[] = [];
+    while (queue.length > 0) {
+      const id = queue.shift()!;
+      ordered.push(id);
+      for (const dependent of adjList.get(id) || []) {
+        const newDeg = (inDegree.get(dependent) || 0) - 1;
+        inDegree.set(dependent, newDeg);
+        if (newDeg === 0) queue.push(dependent);
+      }
+    }
+
+    if (ordered.length === allowedIds.size) return ordered;
+    return null;
+  }
+
+  /**
+   * Sort cycle cells into a reasonable computation order.
+   * Cells with fewer in-cycle dependencies come first.
+   */
+  private sortCycleCells(
+    cycleIds: string[],
+    dagNodes: Map<string, { cellId: string; dependencies: string[]; dependents: string[] }>,
+    cycleSet: Set<string>
+  ): string[] {
+    return [...cycleIds].sort((a, b) => {
+      const aDeps = (dagNodes.get(a)?.dependencies ?? []).filter(d => cycleSet.has(d)).length;
+      const bDeps = (dagNodes.get(b)?.dependencies ?? []).filter(d => cycleSet.has(d)).length;
+      return aDeps - bDeps;
+    });
   }
 
   /**
@@ -214,7 +508,9 @@ export class ComputeService {
         if (!node) return;
         switch (node.type) {
           case 'CellRef': {
-            if (node.table === '参数') {
+            if (node.table === '@') {
+              deps.add(node.field);
+            } else if (node.table === '参数') {
               const parts = (node.field as string).split('.');
               // Try full path match first
               const path = '参数.' + node.field;
@@ -291,7 +587,7 @@ export class ComputeService {
     paramValues: Map<string, unknown>,
     paramMap: Map<string, ParameterDefinition>,
     resultRepo: ResultRepository,
-    _targetCellId: string, // kept for backward compat
+    _targetCellId: string,
     modelId: string,
     tableNameToId: Map<string, string>,
     constructionCols: number,
@@ -303,8 +599,45 @@ export class ComputeService {
       参数: {},
     };
 
-    // Build parameter lookup maps
     const codeToId = new Map(parameters.map(p => [p.code, p.id]).filter(([c]) => c) as [string, string][]);
+
+    ctx.getById = (id: string, timeIdx?: number) => {
+      const idx = timeIdx ?? t;
+
+      // Check if it's a parameter
+      if (paramMap.has(id)) {
+        const val = paramValues.get(id);
+        return val !== undefined ? val : 0;
+      }
+
+      // Check if it's a cell
+      const cell = cellMap.get(id);
+      if (!cell) return '#REF!';
+
+      if (!this.isInScope(cell.scope, idx, constructionCols)) return 0;
+      const results = resultRepo.findByCell(id);
+      const found = results.find(r => r.timeIndex === idx && r.modelId === modelId);
+      if (found) return found.value;
+      const dv = cell.defaultValue ?? 0;
+      if (Array.isArray(dv) && idx >= 0 && idx < dv.length) return dv[idx];
+      if (Array.isArray(dv)) return 0;
+      return dv;
+    };
+
+    ctx.getCellArrayById = (id: string) => {
+      if (paramMap.has(id)) {
+        const v = paramValues.get(id);
+        return v !== undefined ? [v] : [];
+      }
+
+      const cell = cellMap.get(id);
+      if (!cell) return [];
+      const results = resultRepo.findByCell(id);
+      return results
+        .filter(r => this.isInScope(cell.scope, r.timeIndex, constructionCols))
+        .map(r => r.value)
+        .filter(v => v !== null);
+    };
 
     ctx.getCell = (tableRef: string, field: string, timeIdx?: number) => {
       if (tableRef === '参数') {
@@ -532,6 +865,74 @@ export class ComputeService {
     ctx['参数'] = paramNs;
 
     return ctx;
+  }
+
+  /**
+   * Resolve a table+field reference to a cell ID.
+   * Used by DAG dependency extraction to map formula references to cell IDs.
+   * Mirrors the lookup logic in getCell(): code-first, then name fallback.
+   */
+  private resolveCellId(
+    table: string,
+    field: string,
+    model: ModelDefinition,
+    tableNameToId: Map<string, string>
+  ): string | undefined {
+    if (table === '参数') return undefined;
+
+    const resolvedTableId = tableNameToId.get(table) ?? table;
+
+    // Phase 1: match by code
+    for (const c of model.cells) {
+      if (c.tableId === resolvedTableId && c.code === field) {
+        return c.id;
+      }
+    }
+
+    // Phase 2: match by name
+    for (const c of model.cells) {
+      if (c.tableId === resolvedTableId && c.name === field) {
+        return c.id;
+      }
+    }
+
+    return undefined;
+  }
+
+  /**
+   * Topological sort of DAG nodes (after self-loops removed).
+   * Returns null if a real cycle exists (excluding self-references).
+   */
+  private topologicalSort(nodes: Map<string, { cellId: string; dependencies: string[]; dependents: string[] }>): string[] | null {
+    const inDegree = new Map<string, number>();
+    const adjList = new Map<string, string[]>();
+
+    for (const [id, node] of nodes) {
+      inDegree.set(id, node.dependencies.length);
+      adjList.set(id, [...node.dependents]);
+    }
+
+    const queue: string[] = [];
+    for (const [id, deg] of inDegree) {
+      if (deg === 0) queue.push(id);
+    }
+
+    const ordered: string[] = [];
+    while (queue.length > 0) {
+      const id = queue.shift()!;
+      ordered.push(id);
+      for (const dependent of adjList.get(id) || []) {
+        const newDeg = (inDegree.get(dependent) || 0) - 1;
+        inDegree.set(dependent, newDeg);
+        if (newDeg === 0) queue.push(dependent);
+      }
+    }
+
+    if (ordered.length === nodes.size) {
+      return ordered;
+    }
+
+    return null;
   }
 
   /**

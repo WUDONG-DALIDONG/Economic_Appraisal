@@ -3,6 +3,7 @@ import type { ModelDefinition, ParameterDefinition } from '@economic/core';
 import { ParameterType, recomputeCodes, getCodeDepth } from '@economic/core';
 import { FormulaEditor } from '../components/FormulaEditor.js';
 import { FormulaEditModal } from '../components/FormulaEditModal.js';
+import { formatNumber } from '../utils/formatNumber.js';
 
 interface ParameterTreeEditorProps {
   model: ModelDefinition;
@@ -12,6 +13,7 @@ interface ParameterTreeEditorProps {
 }
 
 const CODE_COL_WIDTH = 70;
+const ID_COL_WIDTH = 140;
 const ACTION_COL_WIDTH = 110;
 const NAME_COL_WIDTH = 160;
 const TYPE_COL_WIDTH = 90;
@@ -27,6 +29,13 @@ export const ParameterTreeEditor: React.FC<ParameterTreeEditorProps> = ({
 }) => {
   const [collapsedCodes, setCollapsedCodes] = useState<Set<string>>(new Set());
   const [editingFormulaParamId, setEditingFormulaParamId] = useState<string | null>(null);
+  const [showIdColumn, setShowIdColumn] = useState(false);
+  const [precisionParamId, setPrecisionParamId] = useState<string | null>(null);
+  const [editingParamId, setEditingParamId] = useState<string | null>(null);
+
+  const si = showIdColumn;
+  const idW = si ? ID_COL_WIDTH : 0;
+  const nameLeft = CODE_COL_WIDTH + idW;
 
   // Store old names for rename-on-blur (race-condition fix)
   const renameRef = useRef<{ id: string; oldName: string } | null>(null);
@@ -90,11 +99,26 @@ export const ParameterTreeEditor: React.FC<ParameterTreeEditorProps> = ({
   };
 
   const updateParam = (id: string, updates: Partial<ParameterDefinition>) => {
+    if (updates.name !== undefined) {
+      const param = paramsWithCodes.find((p) => p.id === id);
+      if (param) {
+        const siblings = paramsWithCodes.filter(
+          (p) => p.parentId === param.parentId && p.id !== id
+        );
+        if (siblings.some((p) => p.name === updates.name)) {
+          return;
+        }
+      }
+    }
     onChange(paramsWithCodes.map((p) => (p.id === id ? { ...p, ...updates } : p)));
   };
 
   const removeParam = (id: string) => {
     const desc = getDescendants(id);
+    const msg = desc.length > 0
+      ? `确定删除该参数及其 ${desc.length} 个子参数？`
+      : '确定删除该参数？';
+    if (!confirm(msg)) return;
     const removeSet = new Set([id, ...desc]);
     const target = paramsWithCodes.find((p) => p.id === id);
     const newParentId = target ? target.parentId : null;
@@ -139,9 +163,16 @@ export const ParameterTreeEditor: React.FC<ParameterTreeEditorProps> = ({
       siblingIdx < siblings.length - 1
         ? (targetSo + (siblings[siblingIdx + 1].sortOrder ?? targetSo + 1)) / 2
         : targetSo + 1;
+    const siblingNames = new Set(siblings.map((p) => p.name));
+    let newName = '新参数';
+    if (siblingNames.has(newName)) {
+      let counter = 1;
+      while (siblingNames.has(`新参数${counter}`)) counter++;
+      newName = `新参数${counter}`;
+    }
     const newParam: ParameterDefinition = {
       id: `p-${Date.now()}`,
-      name: '新参数',
+      name: newName,
       type: ParameterType.Number,
       defaultValue: 0,
       sortOrder: newSo,
@@ -181,12 +212,32 @@ export const ParameterTreeEditor: React.FC<ParameterTreeEditorProps> = ({
   const headerRow = (
     <div style={{ display: 'flex', borderBottom: '1px solid #ddd', background: '#f5f5f5', fontSize: 12, fontWeight: 600, minWidth: 670 }}>
       <div style={{ width: CODE_COL_WIDTH, padding: '6px 8px', position: 'sticky', left: 0, background: '#f5f5f5', zIndex: 2 }}>编码</div>
-      <div style={{ width: NAME_COL_WIDTH, padding: '6px 8px', position: 'sticky', left: CODE_COL_WIDTH, background: '#f5f5f5', zIndex: 2 }}>名称</div>
+      {si && (
+        <div style={{ width: ID_COL_WIDTH, padding: '6px 8px', position: 'sticky', left: CODE_COL_WIDTH, background: '#f5f5f5', zIndex: 2 }}>ID</div>
+      )}
+      <div style={{ width: NAME_COL_WIDTH, padding: '6px 8px', position: 'sticky', left: nameLeft, background: '#f5f5f5', zIndex: 2 }}>名称</div>
       <div style={{ width: ACTION_COL_WIDTH, padding: '6px 8px', textAlign: 'center' }}>操作</div>
       <div style={{ width: TYPE_COL_WIDTH, padding: '6px 8px' }}>类型</div>
       <div style={{ width: UNIT_COL_WIDTH, padding: '6px 8px' }}>单位</div>
       <div style={{ width: VALUE_COL_WIDTH, padding: '6px 8px' }}>默认值</div>
       <div style={{ width: FORMULA_COL_WIDTH, padding: '6px 8px' }}>公式</div>
+      <div style={{ marginLeft: 'auto', padding: '0 8px' }}>
+        <button
+          onClick={() => setShowIdColumn(!showIdColumn)}
+          style={{
+            padding: '2px 8px',
+            fontSize: 11,
+            border: '1px solid #ddd',
+            background: showIdColumn ? '#1976d2' : '#fff',
+            color: showIdColumn ? '#fff' : '#666',
+            borderRadius: 3,
+            cursor: 'pointer',
+            fontFamily: 'monospace',
+          }}
+        >
+          ID
+        </button>
+      </div>
     </div>
   );
 
@@ -205,8 +256,14 @@ export const ParameterTreeEditor: React.FC<ParameterTreeEditorProps> = ({
               <div style={{ width: CODE_COL_WIDTH, padding: '6px 8px', position: 'sticky', left: 0, background: '#fff', zIndex: 1, fontSize: 12, color: '#666' }}>
                 {param.code}
               </div>
+              {/* ID列 */}
+              {si && (
+                <div style={{ width: ID_COL_WIDTH, padding: '6px 8px', position: 'sticky', left: CODE_COL_WIDTH, background: '#fff', zIndex: 1, fontSize: 10, color: '#888', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {param.id}
+                </div>
+              )}
               {/* 名称列 */}
-              <div style={{ width: NAME_COL_WIDTH, padding: '6px 8px', position: 'sticky', left: CODE_COL_WIDTH, background: '#fff', zIndex: 1, display: 'flex', alignItems: 'center' }}>
+              <div style={{ width: NAME_COL_WIDTH, padding: '6px 8px', position: 'sticky', left: nameLeft, background: '#fff', zIndex: 1, display: 'flex', alignItems: 'center' }}>
                 {depth > 1 && (
                   <span style={{ width: (depth - 1) * 16, display: 'inline-block' }} />
                 )}
@@ -232,6 +289,36 @@ export const ParameterTreeEditor: React.FC<ParameterTreeEditorProps> = ({
                 <button onClick={() => indentParam(param.id)} style={actionBtnStyle}>→</button>
                 <button onClick={() => outdentParam(param.id)} style={actionBtnStyle}>←</button>
                 <button onClick={() => insertParamAt(param.id)} style={actionBtnStyle}>+</button>
+                <span style={{ position: 'relative', display: 'inline-block' }}>
+                  <button
+                    onClick={() => setPrecisionParamId(precisionParamId === param.id ? null : param.id)}
+                    title={`精度: ${param.precision ?? 2} 位`}
+                    style={{ ...actionBtnStyle, color: '#666', fontSize: 10, fontFamily: 'monospace', width: 24 }}
+                  >
+                    {param.precision ?? 2}d
+                  </button>
+                  {precisionParamId === param.id && (
+                    <div style={{
+                      position: 'absolute', top: 22, left: -10, zIndex: 10,
+                      background: '#fff', border: '1px solid #ddd', borderRadius: 4,
+                      boxShadow: '0 2px 8px rgba(0,0,0,0.15)', padding: 4,
+                    }}>
+                      {[0, 1, 2, 3, 4, 5, 6].map(p => (
+                        <button
+                          key={p}
+                          onClick={() => { updateParam(param.id, { precision: p === 2 ? undefined : p }); setPrecisionParamId(null); }}
+                          style={{
+                            display: 'block', width: '100%', padding: '3px 12px',
+                            border: 'none', background: (param.precision ?? 2) === p ? '#e3f2fd' : '#fff',
+                            cursor: 'pointer', fontSize: 12, textAlign: 'left',
+                          }}
+                        >
+                          {p} 位{p === 2 ? ' (默认)' : ''}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </span>
                 <button onClick={() => removeParam(param.id)} style={{ ...actionBtnStyle, color: '#c62828' }}>×</button>
               </div>
               {/* 类型列 */}
@@ -257,10 +344,24 @@ export const ParameterTreeEditor: React.FC<ParameterTreeEditorProps> = ({
               {/* 默认值列 */}
               <div style={{ width: VALUE_COL_WIDTH, padding: '6px 4px' }}>
                 <input
-                  type={param.type === ParameterType.Number || param.type === ParameterType.Percentage ? 'number' : 'text'}
-                  value={param.defaultValue as any}
-                  onChange={(e) => updateParam(param.id, { defaultValue: param.type === ParameterType.Number || param.type === ParameterType.Percentage ? Number(e.target.value) : e.target.value })}
-                  style={{ width: '100%', padding: '2px 4px', fontSize: 12 }}
+                  type="text"
+                  value={
+                    (param.type === ParameterType.Number || param.type === ParameterType.Percentage) && editingParamId !== param.id && typeof param.defaultValue === 'number'
+                      ? formatNumber(param.defaultValue, param.precision)
+                      : String(param.defaultValue ?? '')
+                  }
+                  onFocus={() => setEditingParamId(param.id)}
+                  onBlur={() => setEditingParamId(null)}
+                  onChange={(e) => {
+                    const raw = e.target.value.replace(/,/g, '');
+                    if (param.type === ParameterType.Number || param.type === ParameterType.Percentage) {
+                      const num = raw === '' ? 0 : Number(raw);
+                      if (!isNaN(num)) updateParam(param.id, { defaultValue: num });
+                    } else {
+                      updateParam(param.id, { defaultValue: e.target.value });
+                    }
+                  }}
+                  style={{ width: '100%', padding: '2px 4px', fontSize: 12, textAlign: 'right' }}
                 />
               </div>
               {/* 公式列 */}

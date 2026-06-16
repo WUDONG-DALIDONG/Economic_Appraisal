@@ -6,6 +6,8 @@ import { resolve, join, dirname } from 'path';
 import { readFileSync, existsSync } from 'fs';
 import { initSchema } from './repository/initDb.js';
 import { migrateParameterHierarchy } from './migration/parameterHierarchy.js';
+import { migratePrecision } from './migration/addPrecision.js';
+import { migrateFormulaIds } from './migration/migrateFormulaIds.js';
 import { registerExportRoute } from './routes/export.js';
 import { seedData } from './seed.js';
 import { backupDb } from './backup.js';
@@ -27,6 +29,8 @@ export async function buildServer(dbPath = DB_PATH, shouldSeed = false) {
   db.pragma('journal_mode = WAL');
   initSchema(db);
   migrateParameterHierarchy(db);
+  migratePrecision(db);
+  migrateFormulaIds(db);
 
   // If using :memory:, seed some demo data so the export works out of the box
   if (shouldSeed && dbPath === ':memory:') {

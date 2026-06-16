@@ -29,8 +29,12 @@ export function collectDependencies(
   function visit(node: ASTNode) {
     switch (node.type) {
       case ASTNodeType.CellRef: {
-        const cellId = context.resolveCellId(node.table, node.field);
-        if (cellId) deps.add(cellId);
+        if (node.table === '@') {
+          deps.add(node.field);
+        } else {
+          const cellId = context.resolveCellId(node.table, node.field);
+          if (cellId) deps.add(cellId);
+        }
         break;
       }
       case ASTNodeType.BinaryOp: {

@@ -48,6 +48,7 @@ export function initSchema(db: Database.Database): void {
       default_value TEXT,
       is_array INTEGER NOT NULL DEFAULT 0,
       scope TEXT DEFAULT 'both',
+      precision INTEGER,
       FOREIGN KEY (table_id) REFERENCES tables(id) ON DELETE CASCADE,
       FOREIGN KEY (model_id) REFERENCES models(id) ON DELETE CASCADE
     );
@@ -67,6 +68,7 @@ export function initSchema(db: Database.Database): void {
       unit TEXT,
       description TEXT,
       options_json TEXT,
+      precision INTEGER,
       UNIQUE(model_id, name),
       FOREIGN KEY (model_id) REFERENCES models(id) ON DELETE CASCADE
     );

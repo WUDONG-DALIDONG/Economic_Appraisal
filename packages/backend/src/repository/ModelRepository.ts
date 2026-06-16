@@ -47,8 +47,8 @@ export class ModelRepository {
     for (const cell of model.cells) {
       this.db
         .prepare(
-          `INSERT INTO cells (id, table_id, model_id, name, code, parent_id, sort_order, formula, cell_type, unit, description, default_value, is_array, scope)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          `INSERT INTO cells (id, table_id, model_id, name, code, parent_id, sort_order, formula, cell_type, unit, description, default_value, is_array, scope, precision)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           cell.id,
@@ -64,7 +64,8 @@ export class ModelRepository {
           cell.description ?? null,
           cell.defaultValue !== undefined ? JSON.stringify(cell.defaultValue) : null,
           1, // Force isArray = true — all cells are timeline arrays
-          cell.scope ?? 'both'
+          cell.scope ?? 'both',
+          cell.precision ?? null
         );
     }
 
@@ -72,8 +73,8 @@ export class ModelRepository {
     for (const param of model.parameters) {
       this.db
         .prepare(
-          `INSERT INTO parameters (id, model_id, name, code, parent_id, sort_order, param_type, default_value, formula, min_value, max_value, unit, description, options_json)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          `INSERT INTO parameters (id, model_id, name, code, parent_id, sort_order, param_type, default_value, formula, min_value, max_value, unit, description, options_json, precision)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           param.id,
@@ -89,7 +90,8 @@ export class ModelRepository {
           param.max ?? null,
           param.unit ?? null,
           param.description ?? null,
-          param.options ? JSON.stringify(param.options) : null
+          param.options ? JSON.stringify(param.options) : null,
+          param.precision ?? null
         );
     }
   }
@@ -156,7 +158,7 @@ export class ModelRepository {
 
       // Re-insert cells
       const insertCell = this.db.prepare(
-        `INSERT INTO cells (id, table_id, model_id, name, code, parent_id, sort_order, formula, cell_type, unit, description, default_value, is_array, scope) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO cells (id, table_id, model_id, name, code, parent_id, sort_order, formula, cell_type, unit, description, default_value, is_array, scope, precision) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       );
       for (const cell of model.cells) {
         insertCell.run(
@@ -173,13 +175,14 @@ export class ModelRepository {
           cell.description ?? null,
           cell.defaultValue !== undefined ? JSON.stringify(cell.defaultValue) : null,
           1, // Force isArray = true — all cells are timeline arrays
-          cell.scope ?? 'both'
+          cell.scope ?? 'both',
+          cell.precision ?? null
         );
       }
 
       // Re-insert parameters
       const insertParam = this.db.prepare(
-        `INSERT INTO parameters (id, model_id, name, code, parent_id, sort_order, param_type, default_value, formula, min_value, max_value, unit, description, options_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO parameters (id, model_id, name, code, parent_id, sort_order, param_type, default_value, formula, min_value, max_value, unit, description, options_json, precision) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       );
       for (const param of model.parameters) {
         insertParam.run(
@@ -196,7 +199,8 @@ export class ModelRepository {
           param.max ?? null,
           param.unit ?? null,
           param.description ?? null,
-          param.options ? JSON.stringify(param.options) : null
+          param.options ? JSON.stringify(param.options) : null,
+          param.precision ?? null
         );
       }
     })();
@@ -258,6 +262,7 @@ export class ModelRepository {
       defaultValue: r.default_value ? JSON.parse(r.default_value) : undefined,
       isArray: !!r.is_array,
       scope: (r.scope as CellDefinition['scope']) ?? 'both',
+      precision: r.precision ?? undefined,
     }));
   }
 
@@ -281,6 +286,7 @@ export class ModelRepository {
       min: r.min_value ?? undefined,
       max: r.max_value ?? undefined,
       options: r.options_json ? JSON.parse(r.options_json) : undefined,
+      precision: r.precision ?? undefined,
     }));
   }
 }
@@ -320,6 +326,7 @@ interface CellRow {
   description: string | null;
   default_value: string | null;
   is_array: number;
+  precision: number | null;
 }
 
 interface ParameterRow {
@@ -337,6 +344,7 @@ interface ParameterRow {
   unit: string | null;
   description: string | null;
   options_json: string | null;
+  precision: number | null;
 }
 
 function rowToModel(row: ModelRow): ModelDefinition {

@@ -3,11 +3,14 @@ import { ModelDefinition } from '@economic/core';
 import { FormulaEditor } from './FormulaEditor.js';
 
 interface FormulaEditModalProps {
-  cellName: string;
-  cellCode: string;
-  cellId: string;
-  initialFormula: string;
+  cellName?: string;
+  cellCode?: string;
+  cellId?: string;
+  initialFormula?: string;
+  title?: string;
+  formula?: string;
   model: ModelDefinition;
+  currentCellId?: string;
   onSave: (formula: string) => void;
   onClose: () => void;
 }
@@ -17,12 +20,19 @@ export const FormulaEditModal: React.FC<FormulaEditModalProps> = ({
   cellCode,
   cellId,
   initialFormula,
+  title,
+  formula: formulaProp,
   model,
+  currentCellId,
   onSave,
   onClose,
 }) => {
-  const [formula, setFormula] = useState(initialFormula);
-  const formulaRef = useRef(initialFormula);
+  const resolvedCellName = title || cellName || '';
+  const resolvedCellCode = cellCode || '';
+  const resolvedCellId = cellId || currentCellId || '';
+  const resolvedInitialFormula = formulaProp || initialFormula || '';
+  const [formula, setFormula] = useState(resolvedInitialFormula);
+  const formulaRef = useRef(resolvedInitialFormula);
 
   const handleChange = (code: string) => {
     formulaRef.current = code;
@@ -90,8 +100,8 @@ export const FormulaEditModal: React.FC<FormulaEditModalProps> = ({
               编辑公式
             </div>
             <div style={{ fontSize: 13, color: '#666', marginTop: 4 }}>
-              {cellName}
-              {cellCode ? ` (${cellCode})` : ''}
+              {resolvedCellName}
+              {resolvedCellCode ? ` (${resolvedCellCode})` : ''}
             </div>
           </div>
           <button
@@ -115,7 +125,7 @@ export const FormulaEditModal: React.FC<FormulaEditModalProps> = ({
             value={formula}
             onChange={handleChange}
             model={model}
-            currentCellId={cellId}
+            currentCellId={resolvedCellId}
             mode="expanded"
           />
         </div>

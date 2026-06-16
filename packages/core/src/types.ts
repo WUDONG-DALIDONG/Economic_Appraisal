@@ -114,6 +114,7 @@ export interface CellDefinition {
   defaultValue?: CellValue;
   isArray?: boolean;
   scope?: 'construction' | 'operation' | 'both';
+  precision?: number;
 }
 
 // ============================================================================
@@ -154,6 +155,7 @@ export interface ParameterDefinition {
   unit?: string;
   description?: string;
   options?: string[];
+  precision?: number;
 }
 
 // ============================================================================

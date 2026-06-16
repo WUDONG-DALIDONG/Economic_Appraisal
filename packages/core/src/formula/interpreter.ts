@@ -10,6 +10,8 @@ import {
 
 export interface EvalContext {
   getCellValue(table: string, field: string, timeIndex: number): CellValue;
+  getCellById(id: string, timeIndex: number): CellValue;
+  getCellArrayById(id: string): CellValue[];
   getAllOperationPeriods(): TimeContext[];
   timeContext: TimeContext;
   functions: Record<string, (...args: CellValue[]) => CellValue>;
@@ -28,6 +30,33 @@ export function evaluate(node: ASTNode, ctx: EvalContext): CellValue {
     }
 
     case ASTNodeType.CellRef: {
+      if (node.table === '@') {
+        if (node.timeRange === '*') {
+          return ctx.getCellArrayById(node.field);
+        }
+
+        let timeIndex: number;
+        if (node.timeExpression) {
+          const evaluated = evaluate(node.timeExpression, ctx);
+          if (typeof evaluated !== 'number') return null;
+          timeIndex = evaluated;
+        } else if (node.timeRange && typeof node.timeRange === 'object') {
+          if (node.timeRange.start === node.timeRange.end) {
+            timeIndex = node.timeRange.start;
+          } else {
+            const results: CellValue[] = [];
+            for (let i = node.timeRange.start; i <= node.timeRange.end; i++) {
+              results.push(ctx.getCellById(node.field, i));
+            }
+            return results;
+          }
+        } else {
+          timeIndex = ctx.timeContext.relativeYear;
+        }
+
+        return ctx.getCellById(node.field, timeIndex);
+      }
+
       if (node.timeRange === '*') {
         // Wildcard: collect all periods
         const allPeriods = ctx.getAllOperationPeriods();

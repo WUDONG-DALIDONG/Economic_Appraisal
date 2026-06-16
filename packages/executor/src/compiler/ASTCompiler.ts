@@ -65,6 +65,21 @@ export class ASTCompiler {
   private compileCellRef(node: CellRefNode): string {
     const { table, field, timeRange, timeExpression } = node;
 
+    if (table === '@') {
+      if (timeRange === '*') {
+        return `ctx.getCellArrayById("${field}")`;
+      }
+
+      let timeArg: string;
+      if (timeExpression) {
+        timeArg = this.compile(timeExpression);
+      } else {
+        timeArg = 'ctx.t';
+      }
+
+      return `ctx.getById("${field}", ${timeArg})`;
+    }
+
     if (timeRange === '*') {
       return `ctx.getCellArray("${table}", "${field}")`;
     }

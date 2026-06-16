@@ -203,6 +203,64 @@ class Parser {
       return { type: ASTNodeType.Literal, value: token.value === 'true' };
     }
 
+    if (token.type === TokenType.IdRef) {
+      this.advance();
+      const refId = token.value;
+
+      let timeRange: { start: number; end: number } | '*' | null = null;
+      let timeExpression: ASTNode | null = null;
+
+      if (this.match(TokenType.LBracket)) {
+        const bracketContent: Token[] = [];
+        let depth = 1;
+        while (depth > 0) {
+          const t = this.peek();
+          if (t.type === TokenType.EOF) {
+            throw new ParseError('Unclosed bracket in ID reference', t.pos);
+          }
+          if (t.type === TokenType.LBracket) depth++;
+          if (t.type === TokenType.RBracket) {
+            depth--;
+            if (depth === 0) { this.advance(); break; }
+          }
+          bracketContent.push(this.advance());
+        }
+
+        if (bracketContent.length === 1) {
+          const content = bracketContent[0];
+          if (content.type === TokenType.Wildcard) {
+            timeRange = '*';
+          } else if (content.type === TokenType.Number) {
+            timeRange = { start: parseFloat(content.value), end: parseFloat(content.value) };
+          } else {
+            timeExpression = parseBracketTokens(bracketContent);
+          }
+        } else if (bracketContent.length === 3) {
+          if (bracketContent[0].type === TokenType.Number &&
+              bracketContent[1].value === ':' &&
+              bracketContent[2].type === TokenType.Number) {
+            timeRange = {
+              start: parseFloat(bracketContent[0].value),
+              end: parseFloat(bracketContent[2].value)
+            };
+          } else {
+            timeExpression = parseBracketTokens(bracketContent);
+          }
+        } else {
+          timeExpression = parseBracketTokens(bracketContent);
+        }
+      }
+
+      return {
+        type: ASTNodeType.CellRef,
+        table: '@',
+        field: refId,
+        timeShift: 0,
+        timeRange,
+        timeExpression,
+      };
+    }
+
     if (token.type === TokenType.Table) {
       // Table might be followed by [ (terse syntax without .Field)
       // or by .Field (full syntax)
