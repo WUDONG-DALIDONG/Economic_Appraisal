@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
 import { initSchema } from '../src/repository/initDb';
 import { ModelRepository } from '../src/repository/ModelRepository';
-import { ModelDefinition, CellType } from '@economic/core';
+import { ModelDefinition, ComputeMode } from '@economic/core';
 
 describe('ModelRepository', () => {
   let db: Database.Database;
@@ -50,8 +50,8 @@ describe('ModelRepository', () => {
         { id: 't2', name: 'Table 2', order: 1 },
       ],
       cells: [
-        { id: 'c1', name: 'Cell 1', tableId: 't1', formula: '=1+1', type: 'Formula' as const, unit: '%', isArray: false },
-        { id: 'c2', name: 'Cell 2', tableId: 't1', formula: '=2+2', type: 'Formula' as const, unit: '%', isArray: false },
+        { id: 'c1', name: 'Cell 1', tableId: 't1', formula: '=1+1', computeMode: 'Formula' as const, valueType: 'number' as const, unit: '%', isArray: false },
+        { id: 'c2', name: 'Cell 2', tableId: 't1', formula: '=2+2', computeMode: 'Formula' as const, valueType: 'number' as const, unit: '%', isArray: false },
       ],
       parameters: [],
       timeline: { constructionYears: 0.5, operationYears: 20, startYear: 2024 },

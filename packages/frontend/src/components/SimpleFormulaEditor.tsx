@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { ModelDefinition } from '@economic/core';
+import { useTheme } from '../ThemeContext.js';
 
 interface SimpleFormulaEditorProps {
   value: string;
@@ -14,6 +15,7 @@ export const SimpleFormulaEditor: React.FC<SimpleFormulaEditorProps> = ({
   model,
   currentCellId,
 }) => {
+  const { theme } = useTheme();
   const [expanded, setExpanded] = useState(false);
 
   const suggestions = getSuggestions(value, model, currentCellId);
@@ -42,7 +44,6 @@ export const SimpleFormulaEditor: React.FC<SimpleFormulaEditorProps> = ({
         placeholder="=..."
         style={{ width: '100%', padding: '4px', fontFamily: 'monospace', fontSize: 12 }}
       />
-      {/* Simple inline dropdown (relative, expands row height but always visible) */}
       {expanded && suggestions.length > 0 && (
         <div
           style={{
@@ -51,26 +52,26 @@ export const SimpleFormulaEditor: React.FC<SimpleFormulaEditorProps> = ({
             width: '100%',
             minWidth: 220,
             marginTop: 2,
-            border: '1px solid #ddd',
+            border: `1px solid ${theme.borderPrimary}`,
             borderRadius: 4,
-            background: '#fff',
+            background: theme.dropdownBg,
             maxHeight: 180,
             overflowY: 'auto',
-            boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+            boxShadow: theme.shadowDropdown,
           }}
         >
           {suggestions.map((s, idx) => (
             <div
               key={idx}
               onMouseDown={(e) => {
-                e.preventDefault(); // keep focus & prevent blur before click
+                e.preventDefault();
                 insert(s.insertText);
               }}
               onMouseEnter={(e) => {
-                (e.currentTarget as HTMLElement).style.background = '#f0f0f0';
+                (e.currentTarget as HTMLElement).style.background = theme.dropdownHover;
               }}
               onMouseLeave={(e) => {
-                (e.currentTarget as HTMLElement).style.background = '#fff';
+                (e.currentTarget as HTMLElement).style.background = theme.dropdownBg;
               }}
               style={{
                 padding: '6px 10px',
@@ -78,11 +79,11 @@ export const SimpleFormulaEditor: React.FC<SimpleFormulaEditorProps> = ({
                 fontSize: 12,
                 display: 'flex',
                 justifyContent: 'space-between',
-                borderBottom: '1px solid #f0f0f0',
+                borderBottom: `1px solid ${theme.bgQuaternary}`,
               }}
             >
               <span style={{ fontWeight: 500 }}>{s.label}</span>
-              <span style={{ color: '#888', fontSize: 11 }}>{s.detail}</span>
+              <span style={{ color: theme.textTertiary, fontSize: 11 }}>{s.detail}</span>
             </div>
           ))}
         </div>
@@ -101,14 +102,13 @@ function getSuggestions(
 
   const token = getLastToken(trimmed);
   if (!token) {
-    // operator or start -> suggest table names + 参数
     if (trimmed.endsWith('=') || /[+\-*/(),\s]$/.test(trimmed)) {
       const out = model.tables.map((t) => ({
         label: t.name,
         detail: '表',
         insertText: t.name + '.',
       }));
-      out.push({ label: '参数', detail: '全局参数', insertText: '参数.' });
+      out.push({ label: '全局参数', detail: '全局参数', insertText: '全局参数.' });
       return out;
     }
     return [];
@@ -116,12 +116,11 @@ function getSuggestions(
 
   const path = token.token;
 
-  // "参数" namespace
-  if (path === '参数') {
+  if (path === '全局参数') {
     return model.parameters.map((p) => ({
       label: p.name,
       detail: (p.type ?? '') + ' ' + (p.unit ?? ''),
-      insertText: '参数.' + p.name,
+      insertText: '全局参数.' + p.name,
     }));
   }
 
@@ -131,7 +130,6 @@ function getSuggestions(
   if (!table) return [];
 
   if (parts.length === 1) {
-    // just a table name
     const cells = model.cells
       .filter((c) => c.tableId === table.id && c.id !== currentCellId)
       .map((c) => ({
@@ -142,7 +140,6 @@ function getSuggestions(
     return cells;
   }
 
-  // deeper path — keep it simple for now; no child drill-down in minimal version
   return [];
 }
 
@@ -151,7 +148,6 @@ function getLastToken(text: string): { token: string; start: number; end: number
   while (i >= 0 && /\s/.test(text[i])) i--;
   if (i < 0) return null;
 
-  // Find start of last token
   let start = i;
   while (start >= 0 && /[\w\u4e00-\u9fff.]/.test(text[start])) {
     start--;
@@ -160,7 +156,6 @@ function getLastToken(text: string): { token: string; start: number; end: number
   const token = text.slice(start + 1, i + 1);
   if (!token) return null;
 
-  // Ensure preceded by operator or start
   if (start >= 0 && !/[+\-*/(),\s=]/.test(text[start])) {
     return null;
   }

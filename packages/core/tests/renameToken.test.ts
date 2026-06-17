@@ -14,20 +14,20 @@ describe('extractTableReferences', () => {
     ]);
   });
 
-  it('extracts 参数 refs', () => {
-    const refs = extractTableReferences('=参数.电价 * 发电量.上网电量');
+  it('extracts 全局参数 refs', () => {
+    const refs = extractTableReferences('=全局参数.电价 * 发电量.上网电量');
     expect(refs).toEqual([
-      { table: '参数', field: '电价' },
+      { table: '全局参数', field: '电价' },
       { table: '发电量', field: '上网电量' },
     ]);
   });
 
   it('extracts terse bracket syntax (table[field])', () => {
-    const refs = extractTableReferences('=发电量[t] * 参数.系数');
+    const refs = extractTableReferences('=发电量[t] * 全局参数.系数');
     // terse syntax table[t] → table interpreted as Table token, but no dot+field pair
     // it appears as Table + LBracket + ... so NOT counted by our dot-pair logic
     expect(refs).toEqual([
-      { table: '参数', field: '系数' },
+      { table: '全局参数', field: '系数' },
     ]);
   });
 
@@ -52,8 +52,8 @@ describe('renameTableInFormula', () => {
   });
 
   it('renames in function arguments', () => {
-    const out = renameTableInFormula('=NPV(参数.折现率, 发电量.现金流)', '发电量', '售电量');
-    expect(out).toBe('=NPV(参数.折现率, 售电量.现金流)');
+    const out = renameTableInFormula('=NPV(全局参数.折现率, 发电量.现金流)', '发电量', '售电量');
+    expect(out).toBe('=NPV(全局参数.折现率, 售电量.现金流)');
   });
 
   it('renames terse bracket syntax', () => {
@@ -94,43 +94,43 @@ describe('renameTableInFormula', () => {
 
   it('renames inside complex expressions', () => {
     const out = renameTableInFormula(
-      '=IF(参数.建设期>0, 投资.初期投资, 投资.运营投资 + 成本.人力)',
+      '=IF(全局参数.建设期>0, 投资.初期投资, 投资.运营投资 + 成本.人力)',
       '投资',
       '财务'
     );
-    expect(out).toBe('=IF(参数.建设期>0, 财务.初期投资, 财务.运营投资 + 成本.人力)');
+    expect(out).toBe('=IF(全局参数.建设期>0, 财务.初期投资, 财务.运营投资 + 成本.人力)');
   });
 });
 
 describe('renameParamInFormula', () => {
-  it('renames simple 参数.field', () => {
-    const out = renameParamInFormula('=参数.电价 * 发电量.上网电量', '电价', '上网电价');
-    expect(out).toBe('=参数.上网电价 * 发电量.上网电量');
+  it('renames simple 全局参数.field', () => {
+    const out = renameParamInFormula('=全局参数.电价 * 发电量.上网电量', '电价', '上网电价');
+    expect(out).toBe('=全局参数.上网电价 * 发电量.上网电量');
   });
 
-  it('renames multiple 参数 occurrences', () => {
-    const out = renameParamInFormula('=参数.电价 + 参数.电价 * 2', '电价', '基础电价');
-    expect(out).toBe('=参数.基础电价 + 参数.基础电价 * 2');
+  it('renames multiple 全局参数 occurrences', () => {
+    const out = renameParamInFormula('=全局参数.电价 + 全局参数.电价 * 2', '电价', '基础电价');
+    expect(out).toBe('=全局参数.基础电价 + 全局参数.基础电价 * 2');
   });
 
-  it('does NOT touch non-参数 namespace', () => {
-    const out = renameParamInFormula('=参数.电价 + 电价.用电成本', '电价', '上网电价');
-    // "电价.用电成本" — table=电价, not the 参数 namespace
-    expect(out).toBe('=参数.上网电价 + 电价.用电成本');
+  it('does NOT touch non-全局参数 namespace', () => {
+    const out = renameParamInFormula('=全局参数.电价 + 电价.用电成本', '电价', '上网电价');
+    // "电价.用电成本" — table=电价, not the 全局参数 namespace
+    expect(out).toBe('=全局参数.上网电价 + 电价.用电成本');
   });
 
   it('does NOT touch identifiers named after the old param', () => {
-    const out = renameParamInFormula('=电价 + 参数.电价', '电价', '基础电价');
-    expect(out).toBe('=电价 + 参数.基础电价');
+    const out = renameParamInFormula('=电价 + 全局参数.电价', '电价', '基础电价');
+    expect(out).toBe('=电价 + 全局参数.基础电价');
   });
 
-  it('preserves formulas without 参数 references', () => {
+  it('preserves formulas without 全局参数 references', () => {
     const formula = '=发电量.上网电量 * 2';
     expect(renameParamInFormula(formula, 'x', 'y')).toBe(formula);
   });
 
   it('returns same string when oldName === newName', () => {
-    const formula = '=参数.电价';
+    const formula = '=全局参数.电价';
     expect(renameParamInFormula(formula, '电价', '电价')).toBe(formula);
   });
 
@@ -139,7 +139,7 @@ describe('renameParamInFormula', () => {
   });
 
   it('renames inside function calls', () => {
-    const out = renameParamInFormula('=NPV(参数.折现率, 发电量.现金流)', '折现率', '内部收益率');
-    expect(out).toBe('=NPV(参数.内部收益率, 发电量.现金流)');
+    const out = renameParamInFormula('=NPV(全局参数.折现率, 发电量.现金流)', '折现率', '内部收益率');
+    expect(out).toBe('=NPV(全局参数.内部收益率, 发电量.现金流)');
   });
 });

@@ -1,6 +1,6 @@
 import { parse } from '@economic/core/src/formula/parser';
 import { financialFunctions } from '@economic/core/src/formula/financialFunctions';
-import { ModelDefinition, CellType, ParameterDefinition } from '@economic/core';
+import { ModelDefinition, ComputeMode, ParameterDefinition } from '@economic/core';
 import { recomputeCodes } from '@economic/core/src/utils/coding.js';
 import { ASTCompiler } from '@economic/executor/src/compiler/ASTCompiler';
 import { SafeVM } from '@economic/executor/src/vm/SafeVM';
@@ -19,6 +19,7 @@ export interface ComputeResult {
     timeIndex: number;
     value: number | null;
   }>;
+  paramValues: Array<{ paramId: string; value: unknown }>;
 }
 
 /**
@@ -110,11 +111,12 @@ export class ComputeService {
     }
 
     return {
-      cellCount: model.cells.filter(c => c.type === CellType.Formula && c.formula.trim()).length,
+      cellCount: model.cells.filter(c => c.computeMode === ComputeMode.Formula && c.formula.trim()).length,
       maxTimeIndex: maxTime,
       durationMs: Date.now() - start,
       errors,
       results,
+      paramValues: Array.from(paramValues.entries()).map(([paramId, value]) => ({ paramId, value })),
     };
   }
 
@@ -139,7 +141,7 @@ export class ComputeService {
 
     for (const cellId of orderedCellIds) {
       const cell = cellMap.get(cellId);
-      if (!cell || cell.type !== CellType.Formula || !cell.formula.trim()) continue;
+      if (!cell || cell.computeMode !== ComputeMode.Formula || !cell.formula.trim()) continue;
 
       for (const t of timeRange) {
         if (!this.isInScope(cell.scope, t, constructionCols)) {
@@ -237,7 +239,7 @@ export class ComputeService {
 
       for (const cellId of cycleOrdered) {
         const cell = cellMap.get(cellId);
-        if (!cell || cell.type !== CellType.Formula || !cell.formula.trim()) continue;
+        if (!cell || cell.computeMode !== ComputeMode.Formula || !cell.formula.trim()) continue;
 
         for (const t of timeRange) {
           if (!this.isInScope(cell.scope, t, constructionCols)) continue;
@@ -280,7 +282,7 @@ export class ComputeService {
     // Collect final results for cycle cells
     for (const cellId of cycleIds) {
       const cell = cellMap.get(cellId);
-      if (!cell || cell.type !== CellType.Formula || !cell.formula.trim()) continue;
+      if (!cell || cell.computeMode !== ComputeMode.Formula || !cell.formula.trim()) continue;
 
       for (const t of timeRange) {
         const stored = resultRepo.findByCell(cell.id);
@@ -451,6 +453,7 @@ export class ComputeService {
           const result = this.vm.execute(jsCode, { ctx });
           values.set(id, result);
         } catch (e: any) {
+          console.warn(`[ComputeService] 参数公式计算失败: param=${param.id}, formula=${param.formula}, error=${e.message}`);
           values.set(id, param.defaultValue);
         }
       }
@@ -480,8 +483,8 @@ export class ComputeService {
   /**
    * Extract parameter dependencies from a formula.
    * Supports:
-   *   - ctx.参数.名称 ref
-   *   - ctx.参数.父.子 ref (按 display path 或 code path)
+   *   - ctx.全局参数.名称 ref
+   *   - ctx.全局参数.父.子 ref (按 display path 或 code path)
    *   - bare param id/name refs
    * Only returns IDs of other parameters.
    */
@@ -510,10 +513,10 @@ export class ComputeService {
           case 'CellRef': {
             if (node.table === '@') {
               deps.add(node.field);
-            } else if (node.table === '参数') {
+            } else if (node.table === '全局参数') {
               const parts = (node.field as string).split('.');
               // Try full path match first
-              const path = '参数.' + node.field;
+              const path = '全局参数.' + node.field;
               const byPath = pathToId.get(path);
               if (byPath) {
                 deps.add(byPath);
@@ -560,7 +563,7 @@ export class ComputeService {
 
   /**
    * Build parameter code -> full display path map.
-   * E.g. code "1.2" → "参数.总投资.建设投资"
+   * E.g. code "1.2" → "全局参数.总投资.建设投资"
    */
   private buildParamPathMap(parameters: ParameterDefinition[]): Map<string, string> {
     const codeToName = new Map(parameters.map(p => [p.code, p.name]).filter(([c]) => c) as [string, string][]);
@@ -576,7 +579,7 @@ export class ComputeService {
         // If parentId is a cell id rather than code, stop
         if (curCode && !codeToName.has(curCode)) break;
       }
-      result.set(p.code, '参数.' + parts.join('.'));
+      result.set(p.code, '全局参数.' + parts.join('.'));
     }
     return result;
   }
@@ -596,7 +599,7 @@ export class ComputeService {
     const ctx: any = {
       t,
       functions: financialFunctions,
-      参数: {},
+      全局参数: {},
     };
 
     const codeToId = new Map(parameters.map(p => [p.code, p.id]).filter(([c]) => c) as [string, string][]);
@@ -640,7 +643,7 @@ export class ComputeService {
     };
 
     ctx.getCell = (tableRef: string, field: string, timeIdx?: number) => {
-      if (tableRef === '参数') {
+      if (tableRef === '全局参数') {
         // Hierarchical path resolution for parameters
         const parts = field.split('.');
         // Try full path match backwards
@@ -662,8 +665,8 @@ export class ComputeService {
         if (resolvedId && paramValues.has(resolvedId)) {
           return paramValues.get(resolvedId);
         }
-        // Legacy name fallback via ctx.参数 name map
-        return ctx.参数[field] ?? 0;
+        // Legacy name fallback via ctx.全局参数 name map
+        return ctx.全局参数[field] ?? 0;
       }
       // Resolve table name -> table ID
       const resolvedTableId = tableNameToId.get(tableRef) ?? tableRef;
@@ -700,7 +703,7 @@ export class ComputeService {
     };
 
     ctx.getCellArray = (tableRef: string, field: string) => {
-      if (tableRef === '参数') {
+      if (tableRef === '全局参数') {
         // Hierarchical path resolution for parameters
         const parts = field.split('.');
         let resolvedId: string | undefined;
@@ -721,7 +724,7 @@ export class ComputeService {
           const v = paramValues.get(resolvedId);
           return v !== undefined ? [v] : [];
         }
-        const v = ctx.参数[field];
+        const v = ctx.全局参数[field];
         return v !== undefined ? [v] : [];
       }
       const resolvedTableId = tableNameToId.get(tableRef) ?? tableRef;
@@ -776,7 +779,7 @@ export class ComputeService {
     const paramNs: Record<string, unknown> = {};
     const paramPathValueMap = this.buildParamValueMap(parameters, paramValues);
     for (const [path, value] of paramPathValueMap.entries()) {
-      // Set nested object structure: 参数.总投资.建设投资
+      // Set nested object structure: 全局参数.总投资.建设投资
       const parts = path.split('.');
       let cur = paramNs;
       for (let i = 0; i < parts.length - 1; i++) {
@@ -791,7 +794,7 @@ export class ComputeService {
       const paramDef = paramMap.get(id);
       if (paramDef) paramNs[paramDef.name] = value;
     }
-    ctx['参数'] = paramNs;
+    ctx['全局参数'] = paramNs;
 
     return ctx;
   }
@@ -829,20 +832,63 @@ export class ComputeService {
 
   /**
    * Build VM context for parameter evaluation.
-   * Exposes ctx.参数 namespace with hierarchical paths, bare param ids, and names.
+   * Exposes ctx.全局参数 namespace with hierarchical paths, bare param ids, and names.
    */
   private buildParamContext(
     evaluatedValues: Map<string, unknown>,
     parameters: ParameterDefinition[]
   ): Record<string, unknown> {
-    const ctx: Record<string, unknown> = { t: 0, functions: financialFunctions, 参数: {} };
+    const ctx: Record<string, unknown> = { t: 0, functions: financialFunctions, 全局参数: {} };
 
-    // Expose by id
+    ctx.getById = (id: string, _timeIdx?: number) => {
+      if (evaluatedValues.has(id)) return evaluatedValues.get(id);
+      return 0;
+    };
+
+    const paramNameToId = new Map(parameters.map(p => [p.name, p.id]));
+    const codeToId = new Map(parameters.map(p => [p.code, p.id]).filter(([c]) => c) as [string, string][]);
+    ctx.getCell = (tableRef: string, field: string, _timeIdx?: number) => {
+      if (tableRef === '全局参数') {
+        const byName = paramNameToId.get(field);
+        if (byName && evaluatedValues.has(byName)) return evaluatedValues.get(byName);
+        const parts = field.split('.');
+        let resolvedId: string | undefined;
+        for (let i = parts.length; i >= 1; i--) {
+          const pathCode = parts.slice(parts.length - i).join('.');
+          resolvedId = codeToId.get(pathCode);
+          if (resolvedId) break;
+        }
+        if (!resolvedId) {
+          for (const p of parameters) {
+            if (p.name === field || (parts.length > 0 && p.name === parts[parts.length - 1])) {
+              resolvedId = p.id;
+              break;
+            }
+          }
+        }
+        if (resolvedId && evaluatedValues.has(resolvedId)) return evaluatedValues.get(resolvedId);
+        return (ctx as any)['全局参数']?.[field] ?? 0;
+      }
+      return 0;
+    };
+
+    ctx.getCellArrayById = (id: string) => {
+      if (evaluatedValues.has(id)) {
+        const v = evaluatedValues.get(id);
+        return v !== undefined ? [v] : [];
+      }
+      return [];
+    };
+
+    ctx.getCellArray = (tableRef: string, field: string) => {
+      const val = (ctx.getCell as any)(tableRef, field);
+      return val !== undefined ? [val] : [];
+    };
+
     for (const [id, val] of evaluatedValues) {
       ctx[id] = val;
     }
 
-    // Build 参数 namespace with hierarchical paths
     const paramPathValueMap = this.buildParamValueMap(parameters, evaluatedValues);
     const paramNs: Record<string, unknown> = {};
     for (const [path, value] of paramPathValueMap.entries()) {
@@ -855,14 +901,13 @@ export class ComputeService {
       cur[parts[parts.length - 1]] = value;
     }
 
-    // Also expose flat entries for backward compat
     for (const p of parameters) {
       const val = evaluatedValues.get(p.id);
       if (val !== undefined) {
         paramNs[p.name] = val;
       }
     }
-    ctx['参数'] = paramNs;
+    ctx['全局参数'] = paramNs;
 
     return ctx;
   }
@@ -878,7 +923,7 @@ export class ComputeService {
     model: ModelDefinition,
     tableNameToId: Map<string, string>
   ): string | undefined {
-    if (table === '参数') return undefined;
+    if (table === '全局参数') return undefined;
 
     const resolvedTableId = tableNameToId.get(table) ?? table;
 

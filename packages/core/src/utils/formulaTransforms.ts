@@ -45,7 +45,7 @@ function buildParamIdMaps(parameters: ParameterDefinition[]) {
       parts.unshift(pp.name);
       curId = pp.parentId ?? null;
     }
-    idToPath.set(p.id, `参数.${parts.join('.')}`);
+    idToPath.set(p.id, `全局参数.${parts.join('.')}`);
   }
 
   const pathToId = new Map<string, string>();
@@ -110,7 +110,7 @@ export function formulaDisplayToId(
     }
     const word1 = displayFormula.slice(i, j);
 
-    if ((tableNames.has(word1) || word1 === '参数') && j < displayFormula.length && displayFormula[j] === '.') {
+    if ((tableNames.has(word1) || word1 === '全局参数') && j < displayFormula.length && displayFormula[j] === '.') {
       let restStart = j + 1;
       let k = restStart;
       let bestPath: string | null = null;
@@ -251,9 +251,9 @@ export function formulaCodeToDisplay(
   result = result.replace(
     new RegExp('([\\w\\u4e00-\\u9fff]+)\\.((?:\\d+(?:\\.\\d+)*))', 'g'),
     (match, tblName, code) => {
-      if (tblName === '参数') {
+      if (tblName === '全局参数') {
         const paramPath = paramCodeToPath.get(code);
-        return paramPath ? `参数.${paramPath}` : match;
+        return paramPath ? `全局参数.${paramPath}` : match;
       }
       const path = codeToPath.get(code);
       return path ?? match;
@@ -298,7 +298,7 @@ export function formulaDisplayToCode(
     }
     const word1 = displayFormula.slice(i, j);
 
-    if ((tableNames.has(word1) || word1 === '参数') && j < displayFormula.length && displayFormula[j] === '.') {
+    if ((tableNames.has(word1) || word1 === '全局参数') && j < displayFormula.length && displayFormula[j] === '.') {
       let restStart = j + 1;
       let k = restStart;
       let bestPath: string | null = null;
@@ -314,7 +314,7 @@ export function formulaDisplayToCode(
           bestPath = candidatePath;
           bestEnd = k;
         }
-        if (word1 === '参数' && paramPathToCode.has(displayFormula.slice(restStart, k))) {
+        if (word1 === '全局参数' && paramPathToCode.has(displayFormula.slice(restStart, k))) {
           bestPath = word1 + '.' + displayFormula.slice(restStart, k);
           bestEnd = k;
         }
@@ -327,7 +327,7 @@ export function formulaDisplayToCode(
       }
 
       if (bestPath) {
-        if (word1 === '参数') {
+        if (word1 === '全局参数') {
           const paramPathSegment = bestPath.slice(word1.length + 1);
           const code = paramPathToCode.get(paramPathSegment);
           if (code) {

@@ -10,3 +10,4 @@ backend.log
 .DS_Store
 .vite/
 package-lock.json
+*.tsbuildinfo

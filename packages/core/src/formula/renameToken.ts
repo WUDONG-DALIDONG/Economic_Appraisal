@@ -4,7 +4,7 @@ import { tokenize, Token, TokenType } from './tokenizer';
  * Extract all table.field references from a formula string.
  *
  * Pattern: TokenType.Table + Dot + TokenType.Field
- * Covers both `表名.指标名` and `参数.参数名`.
+ * Covers both `表名.指标名` and `全局参数.参数名`.
  *
  * ScriptBlock formulas return an empty array.
  */
@@ -54,13 +54,13 @@ export function renameTableInFormula(formula: string, oldName: string, newName: 
 /**
  * Rename a specific parameter reference inside `formula`.
  *
- * Specifically replaces `参数.oldName` with `参数.newName`.
- * The namespace (`参数`) is preserved, only the field part is
+ * Specifically replaces `全局参数.oldName` with `全局参数.newName`.
+ * The namespace (`全局参数`) is preserved, only the field part is
  * rewritten.
  */
 export function renameParamInFormula(formula: string, oldName: string, newName: string): string {
   if (!formula || !oldName || oldName === newName) return formula;
-  return renameFieldAfterTable(formula, '参数', oldName, newName);
+  return renameFieldAfterTable(formula, '全局参数', oldName, newName);
 }
 
 /* ------------------------------------------------------------------ */

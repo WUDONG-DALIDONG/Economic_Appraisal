@@ -1,5 +1,5 @@
 import React, { useReducer, useEffect, useCallback } from 'react';
-import { ModelDefinition, renameTableInFormula, renameParamInFormula, extractTableReferences, ParameterType, CellType } from '@economic/core';
+import { ModelDefinition, renameTableInFormula, renameParamInFormula, extractTableReferences, ValueType, ComputeMode } from '@economic/core';
 import { workspaceReducer, initialState } from '../types/workspace.js';
 import { api } from '../hooks/useApi.js';
 import { ModelListPanel } from '../components/ModelListPanel.js';
@@ -10,8 +10,10 @@ import { TableExcelView } from './TableExcelView.js';
 import { ModelToolbar } from './ModelToolbar.js';
 import { ComputePreview } from '../components/ComputePreview.js';
 import { ValidationPanel, validateModel } from '../components/ValidationPanel.js';
+import { useTheme } from '../ThemeContext.js';
 
 export const ModelWorkspace: React.FC = () => {
+  const { theme } = useTheme();
   const [state, dispatch] = useReducer(workspaceReducer, initialState);
 
   useEffect(() => {
@@ -48,7 +50,8 @@ export const ModelWorkspace: React.FC = () => {
         {
           id: `p-${Date.now()}`,
           name: '新参数',
-          type: ParameterType.Number,
+          valueType: ValueType.Number,
+          computeMode: ComputeMode.Input,
           defaultValue: 0,
           sortOrder: 0,
           parentId: null,
@@ -83,7 +86,6 @@ export const ModelWorkspace: React.FC = () => {
     }
     dispatch({ type: 'SET_LOADING', isLoading: true });
     try {
-      // Force every cell to isArray: true before sending
       const modelToSave: ModelDefinition = {
         ...state.currentModel,
         cells: state.currentModel.cells.map((c) => ({ ...c, isArray: true })),
@@ -152,9 +154,9 @@ export const ModelWorkspace: React.FC = () => {
       />
       <main style={{ flex: 1, overflowY: 'auto', padding: 24 }}>
         {state.error && (
-          <div style={{ padding: 12, background: '#ffebee', color: '#c62828', borderRadius: 4, marginBottom: 16 }}>
+          <div style={{ padding: 12, background: theme.bgError, color: theme.error, borderRadius: 4, marginBottom: 16 }}>
             {state.error}
-            <button onClick={() => dispatch({ type: 'CLEAR_ERROR' })} style={{ marginLeft: 12, fontSize: 11, background: 'none', border: 'none', cursor: 'pointer', color: '#c62828' }}>关闭</button>
+            <button onClick={() => dispatch({ type: 'CLEAR_ERROR' })} style={{ marginLeft: 12, fontSize: 11, background: 'none', border: 'none', cursor: 'pointer', color: theme.error }}>关闭</button>
           </div>
         )}
         {state.currentModel ? (
@@ -165,7 +167,7 @@ export const ModelWorkspace: React.FC = () => {
                   <input
                     value={state.currentModel.name}
                     onChange={e => updateModel(m => ({ ...m, name: e.target.value }))}
-                    style={{ padding: '6px 8px', fontSize: 20, fontWeight: 600, border: '1px solid transparent', borderBottom: '1px solid #ddd', background: 'transparent', width: 300 }}
+                    style={{ padding: '6px 8px', fontSize: 20, fontWeight: 600, border: '1px solid transparent', borderBottom: `1px solid ${theme.borderPrimary}`, background: 'transparent', width: 300, color: theme.textPrimary }}
                   />
                 </div>
                 <ModelToolbar
@@ -179,12 +181,11 @@ export const ModelWorkspace: React.FC = () => {
                 value={state.currentModel.description}
                 onChange={e => updateModel(m => ({ ...m, description: e.target.value }))}
                 placeholder="模型描述"
-                style={{ padding: '4px 8px', fontSize: 13, color: '#666', border: '1px solid transparent', borderBottom: '1px solid #eee', background: 'transparent', width: '100%' }}
+                style={{ padding: '4px 8px', fontSize: 13, color: theme.textSecondary, border: '1px solid transparent', borderBottom: `1px solid ${theme.borderSecondary}`, background: 'transparent', width: '100%' }}
               />
             </header>
 
-            {/* Tab Navigation */}
-            <div style={{ marginBottom: 16, borderBottom: '1px solid #ddd' }}>
+            <div style={{ marginBottom: 16, borderBottom: `1px solid ${theme.borderPrimary}` }}>
               {(
                 [
                   { key: 'basic' as const, label: '全局参数' },
@@ -200,10 +201,10 @@ export const ModelWorkspace: React.FC = () => {
                     border: 'none',
                     borderBottom:
                       state.activeWorkspaceTab === tab.key
-                        ? '2px solid #1976d2'
+                        ? `2px solid ${theme.tabActiveBorder}`
                         : '2px solid transparent',
                     background: 'transparent',
-                    color: state.activeWorkspaceTab === tab.key ? '#1976d2' : '#666',
+                    color: state.activeWorkspaceTab === tab.key ? theme.accent : theme.textSecondary,
                     cursor: 'pointer',
                     fontSize: 14,
                     fontWeight: state.activeWorkspaceTab === tab.key ? 600 : 400,
@@ -215,13 +216,13 @@ export const ModelWorkspace: React.FC = () => {
               ))}
             </div>
 
-            {/* Tab Content */}
             {state.activeWorkspaceTab === 'basic' && (
               <>
                 <ParameterTreeEditor
                   model={state.currentModel}
                   parameters={state.currentModel.parameters}
                   onChange={(params) => updateModel((m) => ({ ...m, parameters: params }))}
+                  computeResult={state.computeResult}
                   onRename={(oldName, newName, paramId) => {
                     const m = state.currentModel!;
                     if (oldName === newName) return;
@@ -267,22 +268,18 @@ export const ModelWorkspace: React.FC = () => {
                   onRename={(id, newName) => {
                     const oldName = state.currentModel!.tables.find((t) => t.id === id)?.name ?? '';
                     if (oldName === newName) return;
-                    // Uniqueness check
                     if (state.currentModel!.tables.some((t) => t.id !== id && t.name === newName)) {
                       alert(`表名 "${newName}" 已存在，请使用其他名称`);
                       return;
                     }
-                    // Rename table
                     let tables = state.currentModel!.tables.map((t) =>
                       t.id === id ? { ...t, name: newName } : t
                     );
-                    // Sync all cell formulas referencing this table name
                     let cells = state.currentModel!.cells.map((c) => {
                       if (!c.formula || c.formula === '') return c;
                       const updated = renameTableInFormula(c.formula, oldName, newName);
                       return updated === c.formula ? c : { ...c, formula: updated };
                     });
-                    // Sync parameter formulas referencing this table name
                     let parameters = state.currentModel!.parameters.map((p) => {
                       if (!p.formula || p.formula === '') return p;
                       const updated = renameTableInFormula(p.formula, oldName, newName);
@@ -292,7 +289,6 @@ export const ModelWorkspace: React.FC = () => {
                   }}
                   onDelete={(id) => {
                     const tableName = state.currentModel!.tables.find((t) => t.id === id)?.name ?? '';
-                    // Check for external references to this table
                     const externalRefs: string[] = [];
                     for (const cell of state.currentModel!.cells) {
                       if (cell.tableId === id) continue;
@@ -304,7 +300,7 @@ export const ModelWorkspace: React.FC = () => {
                     for (const param of state.currentModel!.parameters) {
                       const refs = extractTableReferences(param.formula ?? '');
                       if (refs.some((r) => r.table === tableName)) {
-                        externalRefs.push(`参数.${param.name || param.id}`);
+                        externalRefs.push(`全局参数.${param.name || param.id}`);
                       }
                     }
                     if (externalRefs.length > 0) {
@@ -317,6 +313,9 @@ export const ModelWorkspace: React.FC = () => {
                     const nextActive = tables[0]?.id ?? null;
                     dispatch({ type: 'UPDATE_MODEL', model: { ...state.currentModel!, tables, cells } });
                     dispatch({ type: 'SET_ACTIVE_TABLE', tableId: nextActive });
+                  }}
+                  onReorder={(reordered) => {
+                    dispatch({ type: 'UPDATE_MODEL', model: { ...state.currentModel!, tables: reordered } });
                   }}
                 />
                 {state.activeTableId ? (
@@ -332,7 +331,7 @@ export const ModelWorkspace: React.FC = () => {
                     }}
                   />
                 ) : (
-                  <div style={{ padding: 32, color: '#999', textAlign: 'center' }}>
+                  <div style={{ padding: 32, color: theme.textPlaceholder, textAlign: 'center' }}>
                     请选择一个表或点击"+ 新建表"
                   </div>
                 )}
@@ -347,7 +346,7 @@ export const ModelWorkspace: React.FC = () => {
             )}
           </div>
         ) : (
-          <p style={{ color: '#888' }}>请选择一个模型或点击"新建"</p>
+          <p style={{ color: theme.textTertiary }}>请选择一个模型或点击"新建"</p>
         )}
       </main>
     </div>

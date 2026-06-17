@@ -6,7 +6,7 @@ import { buildDAG } from '@economic/core/src/dag/engine';
 import { collectDependencies } from '@economic/core/src/dag/dependencyExtractor';
 import { ASTCompiler } from '../src/compiler/ASTCompiler';
 import { SafeVM } from '../src/vm/SafeVM';
-import { TimeContext, CellValue, CellDefinition, CellType } from '@economic/core';
+import { TimeContext, CellValue, CellDefinition, ComputeMode, ValueType } from '@economic/core';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -51,24 +51,24 @@ function resolveCellId(table: string, field: string): string | undefined {
 // ---------------------------------------------------------------------------
 
 const sampleCells: CellDefinition[] = [
-  { id: 'capacity', name: '装机容量', tableId: 'input', formula: '', type: CellType.Input, unit: 'MW', defaultValue: 100, isArray: false },
-  { id: 'unitCost', name: '单位造价', tableId: 'input', formula: '', type: CellType.Input, unit: '元/W', defaultValue: 3.5, isArray: false },
-  { id: 'decayRate', name: '衰减率', tableId: 'input', formula: '', type: CellType.Input, unit: '%', defaultValue: 0.10, isArray: false },
-  { id: 'price', name: '电价', tableId: 'input', formula: '', type: CellType.Input, unit: '元/度', defaultValue: 0.35, isArray: false },
-  { id: 'oam', name: '运维单价', tableId: 'input', formula: '', type: CellType.Input, unit: '元/度', defaultValue: 0.05, isArray: false },
+  { id: 'capacity', name: '装机容量', tableId: 'input', formula: '', computeMode: ComputeMode.Input, valueType: ValueType.Number, unit: 'MW', defaultValue: 100, isArray: false },
+  { id: 'unitCost', name: '单位造价', tableId: 'input', formula: '', computeMode: ComputeMode.Input, valueType: ValueType.Number, unit: '元/W', defaultValue: 3.5, isArray: false },
+  { id: 'decayRate', name: '衰减率', tableId: 'input', formula: '', computeMode: ComputeMode.Input, valueType: ValueType.Number, unit: '%', defaultValue: 0.10, isArray: false },
+  { id: 'price', name: '电价', tableId: 'input', formula: '', computeMode: ComputeMode.Input, valueType: ValueType.Number, unit: '元/度', defaultValue: 0.35, isArray: false },
+  { id: 'oam', name: '运维单价', tableId: 'input', formula: '', computeMode: ComputeMode.Input, valueType: ValueType.Number, unit: '元/度', defaultValue: 0.05, isArray: false },
 
-  { id: 'totalInvest', name: '总投资', tableId: 'invest', formula: '=input.装机容量 * input.单位造价', type: CellType.Formula, unit: '万元', isArray: false },
-  { id: 'generationFactor', name: '发电系数', tableId: 'profit', formula: '=POWER(1-input.衰减率, t-1)', type: CellType.Formula, unit: '', isArray: true },
-  { id: 'revenue', name: '年收入', tableId: 'profit', formula: '=profit.发电系数[t] * input.电价', type: CellType.Formula, unit: '亿元', isArray: true },
-  { id: 'cost', name: '年成本', tableId: 'profit', formula: '=profit.发电系数[t] * input.运维单价', type: CellType.Formula, unit: '亿元', isArray: true },
-  { id: 'netProfit', name: '净利润', tableId: 'profit', formula: '=profit.年收入[t] - profit.年成本[t]', type: CellType.Formula, unit: '亿元', isArray: true },
+  { id: 'totalInvest', name: '总投资', tableId: 'invest', formula: '=input.装机容量 * input.单位造价', computeMode: ComputeMode.Formula, valueType: ValueType.Number, unit: '万元', isArray: false },
+  { id: 'generationFactor', name: '发电系数', tableId: 'profit', formula: '=POWER(1-input.衰减率, t-1)', computeMode: ComputeMode.Formula, valueType: ValueType.Number, unit: '', isArray: true },
+  { id: 'revenue', name: '年收入', tableId: 'profit', formula: '=profit.发电系数[t] * input.电价', computeMode: ComputeMode.Formula, valueType: ValueType.Number, unit: '亿元', isArray: true },
+  { id: 'cost', name: '年成本', tableId: 'profit', formula: '=profit.发电系数[t] * input.运维单价', computeMode: ComputeMode.Formula, valueType: ValueType.Number, unit: '亿元', isArray: true },
+  { id: 'netProfit', name: '净利润', tableId: 'profit', formula: '=profit.年收入[t] - profit.年成本[t]', computeMode: ComputeMode.Formula, valueType: ValueType.Number, unit: '亿元', isArray: true },
 ];
 
 describe('光储 Model validation', () => {
   // -------------------------------------------------------------------------
   it('parses all sample cell formulas without error', () => {
     for (const cell of sampleCells) {
-      if (cell.type === CellType.Formula) {
+      if (cell.computeMode === ComputeMode.Formula) {
         const ast = parse(cell.formula);
         expect(ast).toBeDefined();
       }

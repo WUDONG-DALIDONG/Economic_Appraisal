@@ -30,10 +30,9 @@ export interface CodingInput {
  * Returns a map of cellId -> newCode
  */
 export function recomputeCodes<T extends CodingInput>(cells: T[]): Map<string, string> {
-  // Collect all valid cell IDs for orphan detection
   const validIds = new Set(cells.map(c => c.id));
+  const indexMap = new Map(cells.map((c, i) => [c.id, i]));
 
-  // Build parent -> children map (normalize orphan parentIds to null)
   const parentToChildren = new Map<string | null, T[]>();
   for (const cell of cells) {
     const parentId = cell.parentId && validIds.has(cell.parentId) ? cell.parentId : null;
@@ -43,9 +42,12 @@ export function recomputeCodes<T extends CodingInput>(cells: T[]): Map<string, s
     parentToChildren.get(parentId)!.push(cell);
   }
 
-  // Sort each group's children by sortOrder (stable: equal sortOrder keeps original order)
   for (const [, children] of parentToChildren) {
-    children.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+    children.sort((a, b) => {
+      const soDiff = (a.sortOrder ?? 0) - (b.sortOrder ?? 0);
+      if (soDiff !== 0) return soDiff;
+      return (indexMap.get(a.id) ?? 0) - (indexMap.get(b.id) ?? 0);
+    });
   }
 
   const result = new Map<string, string>();

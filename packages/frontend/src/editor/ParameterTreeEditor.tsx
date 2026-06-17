@@ -1,47 +1,75 @@
 import React, { useState, useMemo, useRef } from 'react';
 import type { ModelDefinition, ParameterDefinition } from '@economic/core';
-import { ParameterType, recomputeCodes, getCodeDepth } from '@economic/core';
+import { ValueType, ComputeMode, recomputeCodes, getCodeDepth } from '@economic/core';
 import { FormulaEditor } from '../components/FormulaEditor.js';
 import { FormulaEditModal } from '../components/FormulaEditModal.js';
+import { FloatingToolbar } from '../components/FloatingToolbar.js';
 import { formatNumber } from '../utils/formatNumber.js';
+import { useTheme } from '../ThemeContext.js';
 
 interface ParameterTreeEditorProps {
   model: ModelDefinition;
   parameters: ParameterDefinition[];
   onChange: (params: ParameterDefinition[]) => void;
+  computeResult?: { paramValues?: Array<{ paramId: string; value: unknown }> } | null;
   onRename?: (oldName: string, newName: string, paramId: string) => void;
 }
 
 const CODE_COL_WIDTH = 70;
 const ID_COL_WIDTH = 140;
-const ACTION_COL_WIDTH = 110;
+const ACTION_COL_WIDTH = 160;
 const NAME_COL_WIDTH = 160;
+const COMPUTE_MODE_COL_WIDTH = 70;
 const TYPE_COL_WIDTH = 90;
-const UNIT_COL_WIDTH = 60;
+const UNIT_COL_WIDTH = 80;
 const VALUE_COL_WIDTH = 100;
 const FORMULA_COL_WIDTH = 80;
+
+function paramColLeft(showId: boolean, col: 'code' | 'id' | 'name' | 'action' | 'computeMode' | 'valueType' | 'unit' | 'value' | 'formula'): number {
+  const idW = showId ? ID_COL_WIDTH : 0;
+  switch (col) {
+    case 'code': return 0;
+    case 'id': return CODE_COL_WIDTH;
+    case 'name': return CODE_COL_WIDTH + idW;
+    case 'action': return CODE_COL_WIDTH + idW + NAME_COL_WIDTH;
+    case 'computeMode': return CODE_COL_WIDTH + idW + NAME_COL_WIDTH + ACTION_COL_WIDTH;
+    case 'valueType': return CODE_COL_WIDTH + idW + NAME_COL_WIDTH + ACTION_COL_WIDTH + COMPUTE_MODE_COL_WIDTH;
+    case 'unit': return CODE_COL_WIDTH + idW + NAME_COL_WIDTH + ACTION_COL_WIDTH + COMPUTE_MODE_COL_WIDTH + TYPE_COL_WIDTH;
+    case 'value': return CODE_COL_WIDTH + idW + NAME_COL_WIDTH + ACTION_COL_WIDTH + COMPUTE_MODE_COL_WIDTH + TYPE_COL_WIDTH + UNIT_COL_WIDTH;
+    case 'formula': return CODE_COL_WIDTH + idW + NAME_COL_WIDTH + ACTION_COL_WIDTH + COMPUTE_MODE_COL_WIDTH + TYPE_COL_WIDTH + UNIT_COL_WIDTH + VALUE_COL_WIDTH;
+  }
+}
 
 export const ParameterTreeEditor: React.FC<ParameterTreeEditorProps> = ({
   model,
   parameters,
   onChange,
+  computeResult,
   onRename,
 }) => {
+  const { theme } = useTheme();
   const [collapsedCodes, setCollapsedCodes] = useState<Set<string>>(new Set());
   const [editingFormulaParamId, setEditingFormulaParamId] = useState<string | null>(null);
   const [showIdColumn, setShowIdColumn] = useState(false);
-  const [precisionParamId, setPrecisionParamId] = useState<string | null>(null);
+  const [floatingToolbar, setFloatingToolbar] = useState<{ paramId: string; x: number; y: number } | null>(null);
   const [editingParamId, setEditingParamId] = useState<string | null>(null);
 
-  const si = showIdColumn;
-  const idW = si ? ID_COL_WIDTH : 0;
-  const nameLeft = CODE_COL_WIDTH + idW;
+  const paramValueMap = useMemo(() => {
+    const m = new Map<string, unknown>();
+    if (computeResult?.paramValues) {
+      for (const pv of computeResult.paramValues) {
+        m.set(pv.paramId, pv.value);
+      }
+    }
+    return m;
+  }, [computeResult?.paramValues]);
 
-  // Store old names for rename-on-blur (race-condition fix)
+  const si = showIdColumn;
+
   const renameRef = useRef<{ id: string; oldName: string } | null>(null);
 
-  // Recompute hierarchical codes for parameters and sort depth-first
   const paramsWithCodes = useMemo(() => {
+    const indexMap = new Map(parameters.map((p, i) => [p.id, i]));
     const codeMap = recomputeCodes(
       parameters.map((p, i) => ({
         id: p.id,
@@ -53,12 +81,18 @@ export const ParameterTreeEditor: React.FC<ParameterTreeEditorProps> = ({
       ...p,
       code: codeMap.get(p.id) || p.code || '',
     }));
-    // Sort depth-first by code (numeric comparison at each level)
-    withCodes.sort((a, b) => compareCode(a.code || '', b.code || ''));
+    withCodes.sort((a, b) => {
+      const codeA = codeMap.get(a.id) || '';
+      const codeB = codeMap.get(b.id) || '';
+      if (codeA && codeB) return compareCode(codeA, codeB);
+      const soA = a.sortOrder ?? 0;
+      const soB = b.sortOrder ?? 0;
+      if (soA !== soB) return soA - soB;
+      return (indexMap.get(a.id) ?? 0) - (indexMap.get(b.id) ?? 0);
+    });
     return withCodes;
   }, [parameters]);
 
-  // Visible parameters: filter out children of collapsed parents
   const displayParams = useMemo(() => {
     const visible: ParameterDefinition[] = [];
     for (const param of paramsWithCodes) {
@@ -136,33 +170,46 @@ export const ParameterTreeEditor: React.FC<ParameterTreeEditorProps> = ({
     const prev = paramsWithCodes[idx - 1];
     if (target.parentId === prev.id) return;
     if (prev.code && target.code && prev.code.startsWith(target.code + '.')) return;
-    onChange(
-      paramsWithCodes.map((p) => (p.id === id ? { ...p, parentId: prev.id } : p))
-    );
+    const updated = paramsWithCodes.map((p) => (p.id === id ? { ...p, parentId: prev.id } : p));
+    onChange(updated.map((p, i) => ({ ...p, sortOrder: i })));
   };
 
   const outdentParam = (id: string) => {
     const target = paramsWithCodes.find((p) => p.id === id);
     if (!target || !target.parentId) return;
     const parent = paramsWithCodes.find((p) => p.id === target.parentId);
-    onChange(
-      paramsWithCodes.map((p) =>
-        p.id === id ? { ...p, parentId: parent?.parentId ?? null } : p
-      )
+    const updated = paramsWithCodes.map((p) =>
+      p.id === id ? { ...p, parentId: parent?.parentId ?? null } : p
     );
+    onChange(updated.map((p, i) => ({ ...p, sortOrder: i })));
   };
 
   const insertParamAt = (id: string) => {
     const target = paramsWithCodes.find((p) => p.id === id);
     if (!target) return;
     const targetIdx = paramsWithCodes.findIndex((p) => p.id === id);
+
+    const descendants = getDescendants(target.id);
+    const insertIdx = targetIdx + descendants.length + 1;
+
+    const lastDescOrTarget = descendants.length > 0
+      ? paramsWithCodes.find(p => p.id === descendants[descendants.length - 1]) ?? target
+      : target;
+    const refSo = lastDescOrTarget.sortOrder ?? 0;
+
+    let nextSibling: ParameterDefinition | null = null;
+    for (let i = insertIdx; i < paramsWithCodes.length; i++) {
+      if (paramsWithCodes[i].parentId === target.parentId) {
+        nextSibling = paramsWithCodes[i];
+        break;
+      }
+    }
+
+    const newSo = nextSibling
+      ? (refSo + (nextSibling.sortOrder ?? refSo + 1)) / 2
+      : refSo + 1;
+
     const siblings = paramsWithCodes.filter((p) => p.parentId === target.parentId);
-    const siblingIdx = siblings.findIndex((p) => p.id === id);
-    const targetSo = target.sortOrder ?? 0;
-    const newSo =
-      siblingIdx < siblings.length - 1
-        ? (targetSo + (siblings[siblingIdx + 1].sortOrder ?? targetSo + 1)) / 2
-        : targetSo + 1;
     const siblingNames = new Set(siblings.map((p) => p.name));
     let newName = '新参数';
     if (siblingNames.has(newName)) {
@@ -173,15 +220,71 @@ export const ParameterTreeEditor: React.FC<ParameterTreeEditorProps> = ({
     const newParam: ParameterDefinition = {
       id: `p-${Date.now()}`,
       name: newName,
-      type: ParameterType.Number,
+      valueType: ValueType.Number,
+      computeMode: ComputeMode.Input,
       defaultValue: 0,
       sortOrder: newSo,
       parentId: target.parentId,
     };
-    // 插入到目标参数之后（保持同级兄弟的顺序）
     const updated = [...paramsWithCodes];
-    updated.splice(targetIdx + 1, 0, newParam);
-    onChange(updated);
+    updated.splice(insertIdx, 0, newParam);
+    onChange(updated.map((p, i) => ({ ...p, sortOrder: i })));
+  };
+
+  const moveUpParam = (id: string) => {
+    const targetIdx = paramsWithCodes.findIndex((p) => p.id === id);
+    if (targetIdx <= 0) return;
+    const target = paramsWithCodes[targetIdx];
+
+    const targetSiblings = paramsWithCodes.filter((p) => p.parentId === target.parentId);
+    const targetSibIdx = targetSiblings.findIndex((p) => p.id === id);
+    if (targetSibIdx <= 0) return;
+
+    const prevSibling = targetSiblings[targetSibIdx - 1];
+    const targetDesc = getDescendants(target.id);
+    const prevDesc = getDescendants(prevSibling.id);
+
+    const updated = [...paramsWithCodes];
+    const prevStartIdx = updated.findIndex((p) => p.id === prevSibling.id);
+    const prevBlockSize = 1 + prevDesc.length;
+    const targetBlockSize = 1 + targetDesc.length;
+
+    const prevBlock = updated.splice(prevStartIdx, prevBlockSize);
+    const targetStartIdxNew = updated.findIndex((p) => p.id === target.id);
+    const targetBlock = updated.splice(targetStartIdxNew, targetBlockSize);
+
+    updated.splice(prevStartIdx, 0, ...targetBlock, ...prevBlock);
+
+    const result = updated.map((p, i) => ({ ...p, sortOrder: i }));
+    onChange(result);
+  };
+
+  const moveDownParam = (id: string) => {
+    const targetIdx = paramsWithCodes.findIndex((p) => p.id === id);
+    if (targetIdx < 0 || targetIdx >= paramsWithCodes.length - 1) return;
+    const target = paramsWithCodes[targetIdx];
+
+    const targetSiblings = paramsWithCodes.filter((p) => p.parentId === target.parentId);
+    const targetSibIdx = targetSiblings.findIndex((p) => p.id === id);
+    if (targetSibIdx === -1 || targetSibIdx >= targetSiblings.length - 1) return;
+
+    const nextSibling = targetSiblings[targetSibIdx + 1];
+    const targetDesc = getDescendants(target.id);
+    const nextDesc = getDescendants(nextSibling.id);
+
+    const updated = [...paramsWithCodes];
+    const targetStartIdx = updated.findIndex((p) => p.id === target.id);
+    const targetBlockSize = 1 + targetDesc.length;
+    const nextBlockSize = 1 + nextDesc.length;
+
+    const targetBlock = updated.splice(targetStartIdx, targetBlockSize);
+    const nextStartIdxNew = updated.findIndex((p) => p.id === nextSibling.id);
+    const nextBlock = updated.splice(nextStartIdxNew, nextBlockSize);
+
+    updated.splice(targetStartIdx, 0, ...nextBlock, ...targetBlock);
+
+    const result = updated.map((p, i) => ({ ...p, sortOrder: i }));
+    onChange(result);
   };
 
   const toggleCollapse = (code: string) => {
@@ -208,204 +311,377 @@ export const ParameterTreeEditor: React.FC<ParameterTreeEditorProps> = ({
     }
   };
 
-  // Header row
-  const headerRow = (
-    <div style={{ display: 'flex', borderBottom: '1px solid #ddd', background: '#f5f5f5', fontSize: 12, fontWeight: 600, minWidth: 670 }}>
-      <div style={{ width: CODE_COL_WIDTH, padding: '6px 8px', position: 'sticky', left: 0, background: '#f5f5f5', zIndex: 2 }}>编码</div>
-      {si && (
-        <div style={{ width: ID_COL_WIDTH, padding: '6px 8px', position: 'sticky', left: CODE_COL_WIDTH, background: '#f5f5f5', zIndex: 2 }}>ID</div>
-      )}
-      <div style={{ width: NAME_COL_WIDTH, padding: '6px 8px', position: 'sticky', left: nameLeft, background: '#f5f5f5', zIndex: 2 }}>名称</div>
-      <div style={{ width: ACTION_COL_WIDTH, padding: '6px 8px', textAlign: 'center' }}>操作</div>
-      <div style={{ width: TYPE_COL_WIDTH, padding: '6px 8px' }}>类型</div>
-      <div style={{ width: UNIT_COL_WIDTH, padding: '6px 8px' }}>单位</div>
-      <div style={{ width: VALUE_COL_WIDTH, padding: '6px 8px' }}>默认值</div>
-      <div style={{ width: FORMULA_COL_WIDTH, padding: '6px 8px' }}>公式</div>
-      <div style={{ marginLeft: 'auto', padding: '0 8px' }}>
-        <button
-          onClick={() => setShowIdColumn(!showIdColumn)}
-          style={{
-            padding: '2px 8px',
-            fontSize: 11,
-            border: '1px solid #ddd',
-            background: showIdColumn ? '#1976d2' : '#fff',
-            color: showIdColumn ? '#fff' : '#666',
-            borderRadius: 3,
-            cursor: 'pointer',
-            fontFamily: 'monospace',
-          }}
-        >
-          ID
-        </button>
-      </div>
-    </div>
-  );
+  const codeDepth = (code?: string): number => {
+    if (!code) return 1;
+    return getCodeDepth(code);
+  };
+
+  const fixedHeaderStyle = (left: number, width: number): React.CSSProperties => ({
+    position: 'sticky',
+    left,
+    top: 0,
+    zIndex: 3,
+    background: theme.bgSecondary,
+    borderBottom: `2px solid ${theme.borderPrimary}`,
+    borderRight: `1px solid ${theme.borderPrimary}`,
+    padding: '6px 8px',
+    fontSize: 12,
+    fontWeight: 600,
+    width,
+    minWidth: width,
+    textAlign: 'left' as const,
+  });
+
+  const fixedCellStyle = (left: number, _width: number): React.CSSProperties => ({
+    position: 'sticky',
+    left,
+    zIndex: 1,
+    background: theme.bgPrimary,
+    borderBottom: `1px solid ${theme.borderSecondary}`,
+    borderRight: `1px solid ${theme.borderPrimary}`,
+    padding: '4px 8px',
+    fontSize: 12,
+  });
 
   return (
     <section style={{ marginBottom: 24 }}>
-      <h3 style={{ margin: '0 0 12px', fontSize: 15 }}>全局参数</h3>
-      <div style={{ border: '1px solid #ddd', borderRadius: 4, overflowX: 'auto', position: 'relative', maxHeight: 500 }}>
-        {headerRow}
-        {displayParams.map((param) => {
-          const isLeaf = !hasChildren(param.id);
-          const isCollapsed = param.code ? collapsedCodes.has(param.code) : false;
-          const depth = getCodeDepth(param.code || '');
-          return (
-            <div key={param.id} style={{ display: 'flex', alignItems: 'center', borderBottom: '1px solid #f0f0f0', minWidth: 670, height: 36 }}>
-              {/* 编码列 */}
-              <div style={{ width: CODE_COL_WIDTH, padding: '6px 8px', position: 'sticky', left: 0, background: '#fff', zIndex: 1, fontSize: 12, color: '#666' }}>
-                {param.code}
-              </div>
-              {/* ID列 */}
-              {si && (
-                <div style={{ width: ID_COL_WIDTH, padding: '6px 8px', position: 'sticky', left: CODE_COL_WIDTH, background: '#fff', zIndex: 1, fontSize: 10, color: '#888', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {param.id}
-                </div>
-              )}
-              {/* 名称列 */}
-              <div style={{ width: NAME_COL_WIDTH, padding: '6px 8px', position: 'sticky', left: nameLeft, background: '#fff', zIndex: 1, display: 'flex', alignItems: 'center' }}>
-                {depth > 1 && (
-                  <span style={{ width: (depth - 1) * 16, display: 'inline-block' }} />
-                )}
-                {!isLeaf && (
-                  <button
-                    onClick={() => toggleCollapse(param.code!)}
-                    style={{ width: 20, height: 20, border: 'none', background: 'none', cursor: 'pointer', fontSize: 10, padding: 0, marginRight: 2 }}
-                  >
-                    {isCollapsed ? '▶' : '▼'}
-                  </button>
-                )}
-                {isLeaf && <span style={{ width: 20, display: 'inline-block' }} />}
-                <input
-                  value={param.name}
-                  onChange={(e) => updateParam(param.id, { name: e.target.value })}
-                  onFocus={() => { renameRef.current = { id: param.id, oldName: param.name }; }}
-                  onBlur={() => handleNameBlur(param.id)}
-                  style={{ flex: 1, padding: '2px 4px', fontSize: 13, border: '1px solid transparent', borderBottom: '1px solid #eee', background: 'transparent' }}
-                />
-              </div>
-              {/* 操作列 */}
-              <div style={{ width: ACTION_COL_WIDTH, padding: '6px 4px', display: 'flex', gap: 2, justifyContent: 'center' }}>
-                <button onClick={() => indentParam(param.id)} style={actionBtnStyle}>→</button>
-                <button onClick={() => outdentParam(param.id)} style={actionBtnStyle}>←</button>
-                <button onClick={() => insertParamAt(param.id)} style={actionBtnStyle}>+</button>
-                <span style={{ position: 'relative', display: 'inline-block' }}>
-                  <button
-                    onClick={() => setPrecisionParamId(precisionParamId === param.id ? null : param.id)}
-                    title={`精度: ${param.precision ?? 2} 位`}
-                    style={{ ...actionBtnStyle, color: '#666', fontSize: 10, fontFamily: 'monospace', width: 24 }}
-                  >
-                    {param.precision ?? 2}d
-                  </button>
-                  {precisionParamId === param.id && (
-                    <div style={{
-                      position: 'absolute', top: 22, left: -10, zIndex: 10,
-                      background: '#fff', border: '1px solid #ddd', borderRadius: 4,
-                      boxShadow: '0 2px 8px rgba(0,0,0,0.15)', padding: 4,
-                    }}>
-                      {[0, 1, 2, 3, 4, 5, 6].map(p => (
-                        <button
-                          key={p}
-                          onClick={() => { updateParam(param.id, { precision: p === 2 ? undefined : p }); setPrecisionParamId(null); }}
-                          style={{
-                            display: 'block', width: '100%', padding: '3px 12px',
-                            border: 'none', background: (param.precision ?? 2) === p ? '#e3f2fd' : '#fff',
-                            cursor: 'pointer', fontSize: 12, textAlign: 'left',
-                          }}
-                        >
-                          {p} 位{p === 2 ? ' (默认)' : ''}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </span>
-                <button onClick={() => removeParam(param.id)} style={{ ...actionBtnStyle, color: '#c62828' }}>×</button>
-              </div>
-              {/* 类型列 */}
-              <div style={{ width: TYPE_COL_WIDTH, padding: '6px 4px' }}>
-                <select
-                  value={param.type}
-                  onChange={(e) => updateParam(param.id, { type: e.target.value as ParameterType })}
-                  style={{ width: '100%', padding: '2px 4px', fontSize: 12 }}
-                >
-                  {Object.values(ParameterType).map((t) => (
-                    <option key={t} value={t}>{paramTypeLabel(t)}</option>
-                  ))}
-                </select>
-              </div>
-              {/* 单位列 */}
-              <div style={{ width: UNIT_COL_WIDTH, padding: '6px 4px' }}>
-                <input
-                  value={param.unit || ''}
-                  onChange={(e) => updateParam(param.id, { unit: e.target.value })}
-                  style={{ width: '100%', padding: '2px 4px', fontSize: 12, border: '1px solid #ddd', borderRadius: 3 }}
-                />
-              </div>
-              {/* 默认值列 */}
-              <div style={{ width: VALUE_COL_WIDTH, padding: '6px 4px' }}>
-                <input
-                  type="text"
-                  value={
-                    (param.type === ParameterType.Number || param.type === ParameterType.Percentage) && editingParamId !== param.id && typeof param.defaultValue === 'number'
-                      ? formatNumber(param.defaultValue, param.precision)
-                      : String(param.defaultValue ?? '')
-                  }
-                  onFocus={() => setEditingParamId(param.id)}
-                  onBlur={() => setEditingParamId(null)}
-                  onChange={(e) => {
-                    const raw = e.target.value.replace(/,/g, '');
-                    if (param.type === ParameterType.Number || param.type === ParameterType.Percentage) {
-                      const num = raw === '' ? 0 : Number(raw);
-                      if (!isNaN(num)) updateParam(param.id, { defaultValue: num });
-                    } else {
-                      updateParam(param.id, { defaultValue: e.target.value });
-                    }
-                  }}
-                  style={{ width: '100%', padding: '2px 4px', fontSize: 12, textAlign: 'right' }}
-                />
-              </div>
-              {/* 公式列 */}
-              <div style={{ width: FORMULA_COL_WIDTH, padding: '6px 4px', textAlign: 'center' }}>
-                <FormulaEditor
-                  value={param.formula || ''}
-                  onChange={(val) => updateParam(param.id, { formula: val })}
-                  model={model}
-                  currentCellId={param.id}
-                  mode="compact"
-                  onFocus={() => setEditingFormulaParamId(param.id)}
-                />
-                {editingFormulaParamId === param.id && (
-                  <FormulaEditModal
-                    title={`参数公式: ${param.name || ''}`}
-                    formula={param.formula || ''}
-                    onSave={(val) => {
-                      updateParam(param.id, { formula: val });
-                      setEditingFormulaParamId(null);
-                    }}
-                    onClose={() => setEditingFormulaParamId(null)}
-                    model={model}
-                    currentCellId={param.id}
-                  />
-                )}
-              </div>
-            </div>
-          );
-        })}
+      <div style={{ marginBottom: 8, display: 'flex', gap: 8, alignItems: 'center' }}>
+        <span style={{ fontSize: 12, color: theme.textSecondary }}>
+          共 {parameters.length} 个参数
+        </span>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
+          <button
+            onClick={() => setShowIdColumn(!showIdColumn)}
+            style={{
+              padding: '4px 10px',
+              fontSize: 12,
+              border: `1px solid ${theme.borderPrimary}`,
+              background: showIdColumn ? theme.accent : theme.bgPrimary,
+              color: showIdColumn ? theme.btnPrimaryText : theme.textSecondary,
+              borderRadius: 4,
+              cursor: 'pointer',
+              fontFamily: 'monospace',
+            }}
+          >
+            ID
+          </button>
+        </div>
       </div>
+
+      <div style={{ border: `1px solid ${theme.borderPrimary}`, borderRadius: 4, overflow: 'auto', position: 'relative' }}>
+        <table style={{ borderCollapse: 'collapse', tableLayout: 'fixed' }}>
+          <thead>
+            <tr>
+              <th style={fixedHeaderStyle(paramColLeft(si, 'code'), CODE_COL_WIDTH)}>
+                编码
+              </th>
+              {si && (
+                <th style={fixedHeaderStyle(paramColLeft(si, 'id'), ID_COL_WIDTH)}>
+                  ID
+                </th>
+              )}
+              <th style={fixedHeaderStyle(paramColLeft(si, 'name'), NAME_COL_WIDTH)}>
+                名称
+              </th>
+              <th style={fixedHeaderStyle(paramColLeft(si, 'action'), ACTION_COL_WIDTH)}>
+                操作
+              </th>
+              <th style={fixedHeaderStyle(paramColLeft(si, 'computeMode'), COMPUTE_MODE_COL_WIDTH)}>
+                计算方式
+              </th>
+              <th style={fixedHeaderStyle(paramColLeft(si, 'valueType'), TYPE_COL_WIDTH)}>
+                值类型
+              </th>
+              <th style={fixedHeaderStyle(paramColLeft(si, 'unit'), UNIT_COL_WIDTH)}>
+                单位
+              </th>
+              <th style={fixedHeaderStyle(paramColLeft(si, 'value'), VALUE_COL_WIDTH)}>
+                默认值
+              </th>
+              <th style={fixedHeaderStyle(paramColLeft(si, 'formula'), FORMULA_COL_WIDTH)}>
+                公式
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {displayParams.map((param) => {
+              const isLeaf = !hasChildren(param.id);
+              const isParamCollapsed = param.code ? collapsedCodes.has(param.code) : false;
+              const depth = codeDepth(param.code);
+              return (
+                <tr key={param.id}>
+                  <td style={fixedCellStyle(paramColLeft(si, 'code'), CODE_COL_WIDTH)}>
+                    {hasChildren(param.id) ? (
+                      <span
+                        onClick={() => toggleCollapse(param.code!)}
+                        style={{ cursor: 'pointer', marginRight: 4, userSelect: 'none' }}
+                      >
+                        {isParamCollapsed ? '▶' : '▼'}
+                      </span>
+                    ) : (
+                      <span style={{ marginRight: 4, display: 'inline-block', width: 12 }} />
+                    )}
+                    {param.code || '-'}
+                  </td>
+
+                  {si && (
+                    <td style={{
+                      ...fixedCellStyle(paramColLeft(si, 'id'), ID_COL_WIDTH),
+                      fontSize: 10,
+                      color: theme.textTertiary,
+                      fontFamily: 'monospace',
+                    }}>
+                      {param.id}
+                    </td>
+                  )}
+
+                  <td
+                    style={{
+                      ...fixedCellStyle(paramColLeft(si, 'name'), NAME_COL_WIDTH),
+                      paddingLeft: `${8 + (depth - 1) * 16}px`,
+                    }}
+                  >
+                    <input
+                      value={param.name}
+                      onChange={(e) => updateParam(param.id, { name: e.target.value })}
+                      onFocus={() => { renameRef.current = { id: param.id, oldName: param.name }; }}
+                      onBlur={() => handleNameBlur(param.id)}
+                      style={{
+                        width: '100%',
+                        border: 'none',
+                        background: 'transparent',
+                        fontSize: 12,
+                        padding: 0,
+                        color: theme.textPrimary,
+                      }}
+                    />
+                  </td>
+
+                  <td style={{ ...fixedCellStyle(paramColLeft(si, 'action'), ACTION_COL_WIDTH), display: 'flex', gap: 4, justifyContent: 'center', alignItems: 'center' }}>
+                    <button
+                      onClick={() => indentParam(param.id)}
+                      title="缩进 (设为子级)"
+                      style={{ width: 18, height: 20, color: theme.accent, background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, padding: 0 }}
+                    >
+                      →
+                    </button>
+                    <button
+                      onClick={() => outdentParam(param.id)}
+                      title="反缩进 (提升)"
+                      style={{ width: 18, height: 20, color: theme.accent, background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, padding: 0 }}
+                    >
+                      ←
+                    </button>
+                    <button
+                      onClick={() => moveUpParam(param.id)}
+                      title="上移"
+                      style={{ width: 18, height: 20, color: theme.accent, background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, padding: 0 }}
+                    >
+                      ↑
+                    </button>
+                    <button
+                      onClick={() => moveDownParam(param.id)}
+                      title="下移"
+                      style={{ width: 18, height: 20, color: theme.accent, background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, padding: 0 }}
+                    >
+                      ↓
+                    </button>
+                    <button
+                      onClick={() => insertParamAt(param.id)}
+                      title="下方插入"
+                      style={{ width: 18, height: 20, color: theme.accent, background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, padding: 0 }}
+                    >
+                      +
+                    </button>
+                    <button
+                      onClick={param.computeMode === ComputeMode.Title ? undefined : (e) => setFloatingToolbar({ paramId: param.id, x: e.clientX, y: e.clientY })}
+                      title={`精度: ${param.precision ?? 2} 位`}
+                      disabled={param.computeMode === ComputeMode.Title}
+                      style={{ width: 24, height: 20, color: param.computeMode === ComputeMode.Title ? theme.textTertiary : theme.textSecondary, background: 'none', border: 'none', cursor: param.computeMode === ComputeMode.Title ? 'default' : 'pointer', fontSize: 10, fontFamily: 'monospace', padding: 0 }}
+                    >
+                      {param.precision ?? 2}d
+                    </button>
+                    <button
+                      onClick={() => removeParam(param.id)}
+                      title="删除"
+                      style={{ width: 18, height: 20, color: theme.error, background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, padding: 0 }}
+                    >
+                      ×
+                    </button>
+                  </td>
+
+                  <td style={fixedCellStyle(paramColLeft(si, 'computeMode'), COMPUTE_MODE_COL_WIDTH)}>
+                    <select
+                      value={param.computeMode || ComputeMode.Input}
+                      onChange={(e) => updateParam(param.id, { computeMode: e.target.value as ComputeMode })}
+                      style={{ border: 'none', background: 'transparent', fontSize: 12, padding: 0, color: theme.textPrimary }}
+                    >
+                      <option value={ComputeMode.Title}>−</option>
+                      <option value={ComputeMode.Input}>输入</option>
+                      <option value={ComputeMode.Formula}>公式</option>
+                    </select>
+                  </td>
+
+                  <td style={fixedCellStyle(paramColLeft(si, 'valueType'), TYPE_COL_WIDTH)}>
+                    <select
+                      value={param.valueType}
+                      onChange={(e) => updateParam(param.id, { valueType: e.target.value as ValueType })}
+                      disabled={param.computeMode === ComputeMode.Title}
+                      style={{ border: 'none', background: 'transparent', fontSize: 12, padding: 0, color: theme.textPrimary }}
+                    >
+                      {Object.values(ValueType).map((t) => (
+                        <option key={t} value={t}>{valueTypeLabel(t)}</option>
+                      ))}
+                    </select>
+                  </td>
+
+                  <td style={fixedCellStyle(paramColLeft(si, 'unit'), UNIT_COL_WIDTH)}>
+                    <input
+                      value={param.unit || ''}
+                      onChange={(e) => updateParam(param.id, { unit: e.target.value })}
+                      readOnly={param.computeMode === ComputeMode.Title}
+                      style={{
+                        width: '100%',
+                        border: 'none',
+                        background: 'transparent',
+                        fontSize: 12,
+                        padding: 0,
+                        color: param.computeMode === ComputeMode.Title ? theme.textTertiary : theme.textPrimary,
+                      }}
+                    />
+                  </td>
+
+                  <td style={fixedCellStyle(paramColLeft(si, 'value'), VALUE_COL_WIDTH)}>
+                    {param.computeMode === ComputeMode.Title ? (
+                      <span />
+                    ) : param.computeMode === ComputeMode.Formula ? (
+                      <input
+                        type="text"
+                        readOnly
+                        value={
+                          (() => {
+                            const computedVal = paramValueMap.get(param.id);
+                            const displayVal = computedVal !== undefined ? computedVal : param.defaultValue;
+                            return (param.valueType === ValueType.Number || param.valueType === ValueType.Percentage) && typeof displayVal === 'number'
+                              ? formatNumber(displayVal, param.precision, param.valueType, param.useGrouping)
+                              : String(displayVal ?? '');
+                          })()
+                        }
+                        style={{ width: '100%', border: 'none', background: 'transparent', fontSize: 12, textAlign: 'right', padding: 0, color: theme.textSecondary }}
+                      />
+                    ) : (
+                      <input
+                        type="text"
+                        value={
+                          (() => {
+                            const computedVal = param.formula ? paramValueMap.get(param.id) : undefined;
+                            const displayVal = computedVal !== undefined ? computedVal : param.defaultValue;
+                            return (param.valueType === ValueType.Number || param.valueType === ValueType.Percentage) && editingParamId !== param.id && typeof displayVal === 'number'
+                              ? formatNumber(displayVal, param.precision, param.valueType, param.useGrouping)
+                              : String(displayVal ?? '');
+                          })()
+                        }
+                        onFocus={() => setEditingParamId(param.id)}
+                        onBlur={() => setEditingParamId(null)}
+                        onChange={(e) => {
+                          const raw = e.target.value.replace(/,/g, '');
+                          if (param.valueType === ValueType.Number || param.valueType === ValueType.Percentage) {
+                            const num = raw === '' ? 0 : Number(raw);
+                            if (!isNaN(num)) updateParam(param.id, { defaultValue: num });
+                          } else {
+                            updateParam(param.id, { defaultValue: e.target.value });
+                          }
+                        }}
+                        style={{ width: '100%', border: 'none', background: 'transparent', fontSize: 12, textAlign: 'right', padding: 0, color: theme.textPrimary }}
+                      />
+                    )}
+                  </td>
+
+                  <td style={fixedCellStyle(paramColLeft(si, 'formula'), FORMULA_COL_WIDTH)}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
+                      {param.computeMode === ComputeMode.Formula ? (
+                        <FormulaEditor
+                          value={param.formula || ''}
+                          onChange={(val) => updateParam(param.id, { formula: val })}
+                          model={model}
+                          currentCellId={param.id}
+                          mode="compact"
+                          scope="parameters-only"
+                          onFocus={() => setEditingFormulaParamId(param.id)}
+                        />
+                      ) : (
+                        <span style={{ color: theme.textPlaceholder }}>−</span>
+                      )}
+                    </div>
+                    {editingFormulaParamId === param.id && (
+                      <FormulaEditModal
+                        title={`参数公式: ${param.name || ''}`}
+                        formula={param.formula || ''}
+                        onSave={(val) => {
+                          updateParam(param.id, { formula: val });
+                          setEditingFormulaParamId(null);
+                        }}
+                        onClose={() => setEditingFormulaParamId(null)}
+                        model={model}
+                        currentCellId={param.id}
+                        scope="parameters-only"
+                      />
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+
+            {displayParams.length === 0 && (
+              <tr>
+                <td
+                  colSpan={si ? 9 : 8}
+                  style={{
+                    padding: 32,
+                    textAlign: 'center',
+                    color: theme.textPlaceholder,
+                    fontSize: 14,
+                  }}
+                >
+                  暂无参数，点击行内"+"按钮开始添加
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      {floatingToolbar && (() => {
+        const param = paramsWithCodes.find((p) => p.id === floatingToolbar.paramId);
+        if (!param) return null;
+        return (
+          <FloatingToolbar
+            x={floatingToolbar.x}
+            y={floatingToolbar.y}
+            currentPrecision={param.precision ?? 2}
+            currentValueType={(param.valueType as 'number' | 'percentage') ?? 'number'}
+            currentUseGrouping={param.useGrouping}
+            onSelect={(p) => updateParam(floatingToolbar.paramId, { precision: p === 2 ? undefined : p })}
+            onValueTypeChange={(t) => updateParam(floatingToolbar.paramId, { valueType: t })}
+            onUseGroupingChange={(v) => updateParam(floatingToolbar.paramId, { useGrouping: v })}
+            onClose={() => setFloatingToolbar(null)}
+          />
+        );
+      })()}
     </section>
   );
 };
 
-const actionBtnStyle: React.CSSProperties = {
-  width: 20,
-  height: 20,
-  border: '1px solid #ddd',
-  background: '#fff',
-  cursor: 'pointer',
-  fontSize: 11,
-  borderRadius: 3,
-  padding: 0,
-};
+function valueTypeLabel(t: ValueType): string {
+  const map: Record<string, string> = {
+    [ValueType.Number]: '数值',
+    [ValueType.Percentage]: '百分比',
+    [ValueType.Enum]: '选项',
+    [ValueType.String]: '文本',
+    [ValueType.Boolean]: '布尔',
+    [ValueType.Date]: '日期',
+  };
+  return map[t] || t;
+}
 
 function compareCode(a: string, b: string): number {
   const ap = a.split('.').map(Number);
@@ -415,16 +691,4 @@ function compareCode(a: string, b: string): number {
     if (ap[i] !== bp[i]) return ap[i] - bp[i];
   }
   return ap.length - bp.length;
-}
-
-function paramTypeLabel(t: ParameterType): string {
-  const map: Record<string, string> = {
-    [ParameterType.Number]: '数值',
-    [ParameterType.Percentage]: '百分比',
-    [ParameterType.Enum]: '选项',
-    [ParameterType.String]: '文本',
-    [ParameterType.Boolean]: '布尔',
-    [ParameterType.Date]: '日期',
-  };
-  return map[t] || t;
 }

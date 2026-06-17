@@ -8,6 +8,7 @@ import { initSchema } from './repository/initDb.js';
 import { migrateParameterHierarchy } from './migration/parameterHierarchy.js';
 import { migratePrecision } from './migration/addPrecision.js';
 import { migrateFormulaIds } from './migration/migrateFormulaIds.js';
+import { migrateComputeModeValueType } from './migration/computeModeValueType.js';
 import { registerExportRoute } from './routes/export.js';
 import { seedData } from './seed.js';
 import { backupDb } from './backup.js';
@@ -31,6 +32,7 @@ export async function buildServer(dbPath = DB_PATH, shouldSeed = false) {
   migrateParameterHierarchy(db);
   migratePrecision(db);
   migrateFormulaIds(db);
+  migrateComputeModeValueType(db);
 
   // If using :memory:, seed some demo data so the export works out of the box
   if (shouldSeed && dbPath === ':memory:') {

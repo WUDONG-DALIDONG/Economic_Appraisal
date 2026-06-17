@@ -94,10 +94,20 @@ export type ASTNode =
 // Cell Definition
 // ============================================================================
 
-export enum CellType {
+export enum ComputeMode {
+  Title = 'Title',
   Input = 'Input',
   Formula = 'Formula',
   Script = 'Script',
+}
+
+export enum ValueType {
+  Number = 'number',
+  Percentage = 'percentage',
+  Enum = 'enum',
+  String = 'string',
+  Boolean = 'boolean',
+  Date = 'date',
 }
 
 export interface CellDefinition {
@@ -108,13 +118,15 @@ export interface CellDefinition {
   sortOrder?: number;
   tableId: string;
   formula: string;
-  type: CellType;
+  computeMode: ComputeMode;
+  valueType: ValueType;
   unit: string;
   description?: string;
   defaultValue?: CellValue;
   isArray?: boolean;
   scope?: 'construction' | 'operation' | 'both';
   precision?: number;
+  useGrouping?: boolean;
 }
 
 // ============================================================================
@@ -132,22 +144,14 @@ export interface TableDefinition {
 // Parameter Definition
 // ============================================================================
 
-export enum ParameterType {
-  Number = 'number',
-  Percentage = 'percentage',
-  Enum = 'enum',
-  String = 'string',
-  Boolean = 'boolean',
-  Date = 'date',
-}
-
 export interface ParameterDefinition {
   id: string;
   name: string;
   code?: string;               // 层级编码 (e.g. "1", "1.2")
   parentId?: string | null;    // null = 顶级参数
   sortOrder?: number;
-  type: ParameterType;
+  valueType: ValueType;
+  computeMode: ComputeMode;
   defaultValue: CellValue;
   formula?: string;            // 派生参数公式
   min?: number;
@@ -156,6 +160,7 @@ export interface ParameterDefinition {
   description?: string;
   options?: string[];
   precision?: number;
+  useGrouping?: boolean;
 }
 
 // ============================================================================

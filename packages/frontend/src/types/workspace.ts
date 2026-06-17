@@ -7,7 +7,7 @@ export interface WorkspaceState {
   activeWorkspaceTab: 'basic' | 'table' | 'result';
   isLoading: boolean;
   error: string | null;
-  computeResult: { cellCount: number; durationMs: number; errors: any[]; results: Array<{ cellId: string; timeIndex: number; value: number | null }> } | null;
+  computeResult: { cellCount: number; durationMs: number; errors: any[]; results: Array<{ cellId: string; timeIndex: number; value: number | null }>; paramValues?: Array<{ paramId: string; value: unknown }> } | null;
   validationVisible: boolean;
 }
 

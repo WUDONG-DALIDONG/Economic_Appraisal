@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { ExcelExporter } from '../src/export/ExcelExporter';
-import { ModelDefinition, CellType, TableDefinition, CellDefinition, ParameterDefinition } from '@economic/core';
+import { ModelDefinition, ComputeMode, ValueType, TableDefinition, CellDefinition, ParameterDefinition } from '@economic/core';
 import { ResultRow } from '../src/repository/ResultRepository';
 import * as XLSX from 'xlsx';
 
@@ -17,18 +17,18 @@ function makeModel(): ModelDefinition {
 
   const cells: CellDefinition[] = [
     // input
-    { id: 'capacity', name: '装机容量', tableId: 'input', formula: '', type: CellType.Input, unit: 'MW', defaultValue: 100, isArray: false },
-    { id: 'price', name: '上网电价', tableId: 'input', formula: '', type: CellType.Input, unit: '元/kWh', defaultValue: 0.35, isArray: false },
+    { id: 'capacity', name: '装机容量', tableId: 'input', formula: '', computeMode: ComputeMode.Input, valueType: ValueType.Number, unit: 'MW', defaultValue: 100, isArray: false },
+    { id: 'price', name: '上网电价', tableId: 'input', formula: '', computeMode: ComputeMode.Input, valueType: ValueType.Number, unit: '元/kWh', defaultValue: 0.35, isArray: false },
     // invest
-    { id: 'totalInvest', name: '总投资', tableId: 'invest', formula: '=input.装机容量 * 3.5', type: CellType.Formula, unit: '万元', isArray: false },
+    { id: 'totalInvest', name: '总投资', tableId: 'invest', formula: '=input.装机容量 * 3.5', computeMode: ComputeMode.Formula, valueType: ValueType.Number, unit: '万元', isArray: false },
     // profit
-    { id: 'year1Revenue', name: '第1年收入', tableId: 'profit', formula: '=input.装机容量 * input.上网电价', type: CellType.Formula, unit: '万元', isArray: true },
-    { id: 'year2Revenue', name: '第2年收入', tableId: 'profit', formula: '=input.装机容量 * input.上网电价 * 0.9', type: CellType.Formula, unit: '万元', isArray: true },
+    { id: 'year1Revenue', name: '第1年收入', tableId: 'profit', formula: '=input.装机容量 * input.上网电价', computeMode: ComputeMode.Formula, valueType: ValueType.Number, unit: '万元', isArray: true },
+    { id: 'year2Revenue', name: '第2年收入', tableId: 'profit', formula: '=input.装机容量 * input.上网电价 * 0.9', computeMode: ComputeMode.Formula, valueType: ValueType.Number, unit: '万元', isArray: true },
   ];
 
   const parameters: ParameterDefinition[] = [
-    { id: 'discountRate', name: '折现率', type: 'number', defaultValue: 0.08, unit: '%', description: '项目折现率' },
-    { id: 'taxRate', name: '所得税率', type: 'number', defaultValue: 0.25, unit: '%' },
+    { id: 'discountRate', name: '折现率', valueType: 'number' as const, computeMode: 'Input' as const, defaultValue: 0.08, unit: '%', description: '项目折现率' },
+    { id: 'taxRate', name: '所得税率', valueType: 'number' as const, computeMode: 'Input' as const, defaultValue: 0.25, unit: '%' },
   ];
 
   return {
@@ -86,7 +86,8 @@ describe('ExcelExporter', () => {
     const data = XLSX.utils.sheet_to_json<string[]>(ws, { header: 1 });
 
     expect(data[0]).toContain('指标');
-    expect(data[0]).toContain('类型');
+    expect(data[0]).toContain('计算方式');
+    expect(data[0]).toContain('值类型');
     expect(data[0]).toContain('单位');
     expect(data[0]).toContain('公式');
     expect(data[0]).toContain('建设期');
@@ -103,10 +104,10 @@ describe('ExcelExporter', () => {
     const totalInvestRow = data.find((row: string[]) => row[0] === '总投资');
     expect(totalInvestRow).toBeDefined();
     expect(totalInvestRow![1]).toBe('Formula');
-    expect(totalInvestRow![2]).toBe('万元');
-    expect(totalInvestRow![3]).toBe('=input.装机容量 * 3.5');
-    // Value at 建设期 (column index 4 because of formula column)
-    expect(totalInvestRow![4]).toBe(350);
+    expect(totalInvestRow![2]).toBe('number');
+    expect(totalInvestRow![3]).toBe('万元');
+    expect(totalInvestRow![4]).toBe('=input.装机容量 * 3.5');
+    expect(totalInvestRow![5]).toBe(350);
   });
 
   it('profit sheet has year columns', () => {
@@ -122,7 +123,7 @@ describe('ExcelExporter', () => {
     const y1Row = data.find((row: string[]) => row[0] === '第1年收入');
     expect(y1Row).toBeDefined();
     expect(y1Row![1]).toBe('Formula');
-    expect(y1Row![5]).toBe(35); // header=6 cols, 第1年 is col index 5
+    expect(y1Row![6]).toBe(35);
   });
 
   it('parameters sheet contains all params', () => {
@@ -132,7 +133,7 @@ describe('ExcelExporter', () => {
     const ws = wb.Sheets['模型参数'];
     const data = XLSX.utils.sheet_to_json<string[]>(ws, { header: 1 });
 
-    expect(data[0]).toEqual(['参数名', '当前值', '类型', '单位', '描述']);
+    expect(data[0]).toEqual(['参数名', '当前值', '值类型', '计算方式', '单位', '描述']);
     expect(data.length).toBe(3); // header + 2 params
 
     const discountRow = data.find((row: string[]) => row[0] === '折现率');
@@ -162,7 +163,7 @@ describe('ExcelExporter', () => {
     const data = XLSX.utils.sheet_to_json<string[]>(ws, { header: 1 });
 
     expect(data[0]).not.toContain('公式');
-    expect(data[0].length).toBe(6); // 指标,类型,单位,建设期,第1年,第2年
+    expect(data[0].length).toBe(7);
   });
 
   it('empty results produce sheet with headers only', () => {

@@ -3,6 +3,9 @@ import { render, screen } from '@testing-library/react';
 import { describe, it, expect } from 'vitest';
 import { ModelEditor } from '../src/editor/ModelEditor';
 import { ModelDefinition } from '@economic/core';
+import { ThemeProvider } from '../src/ThemeContext';
+
+const wrap = (ui: React.ReactElement) => <ThemeProvider>{ui}</ThemeProvider>;
 
 describe('ModelEditor', () => {
   const fakeModel: ModelDefinition = {
@@ -18,18 +21,18 @@ describe('ModelEditor', () => {
   };
 
   it('renders model name and version', () => {
-    render(<ModelEditor model={fakeModel} />);
+    render(wrap(<ModelEditor model={fakeModel} />));
     expect(screen.getByText('Test Model')).toBeDefined();
     expect(screen.getByText(/v1\.0\.0/)).toBeDefined();
   });
 
   it('renders description', () => {
-    render(<ModelEditor model={fakeModel} />);
+    render(wrap(<ModelEditor model={fakeModel} />));
     expect(screen.getByText('A test financial model')).toBeDefined();
   });
 
   it('renders timeline summary', () => {
-    render(<ModelEditor model={fakeModel} />);
+    render(wrap(<ModelEditor model={fakeModel} />));
     expect(screen.getByText(/建设期/i)).toBeDefined();
     expect(screen.getByText(/运营期/i)).toBeDefined();
   });

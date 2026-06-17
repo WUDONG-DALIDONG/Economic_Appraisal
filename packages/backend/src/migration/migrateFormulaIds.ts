@@ -29,7 +29,7 @@ export function migrateFormulaIds(db: Database.Database): void {
 
   const paramKeyToId = new Map<string, string>();
   for (const p of allParams) {
-    paramKeyToId.set(`参数.${p.code}`, p.id);
+    paramKeyToId.set(`全局参数.${p.code}`, p.id);
   }
 
   const formulaCells = db
@@ -44,8 +44,8 @@ export function migrateFormulaIds(db: Database.Database): void {
 
   function convertFormula(formula: string): string {
     return formula.replace(codeRegex, (match, tblName: string, code: string) => {
-      if (tblName === '参数') {
-        const paramId = paramKeyToId.get(`参数.${code}`);
+      if (tblName === '全局参数') {
+        const paramId = paramKeyToId.get(`全局参数.${code}`);
         if (paramId) return `@{${paramId}}`;
         return match;
       }

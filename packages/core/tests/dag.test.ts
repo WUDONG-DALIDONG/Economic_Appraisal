@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { buildDAG, getTransitiveDependents, getDependencies, getDependents, DAG } from '../src/dag/engine';
 import { collectDependencies } from '../src/dag/dependencyExtractor';
-import { CellDefinition, CellType } from '../src/types';
+import { CellDefinition, ComputeMode, ValueType } from '../src/types';
 
-function makeCell(id: string, formula: string, type: CellType = CellType.Formula): CellDefinition {
-  return { id, name: id, tableId: 'test', formula, type, unit: '' };
+function makeCell(id: string, formula: string, computeMode: ComputeMode = ComputeMode.Formula): CellDefinition {
+  return { id, name: id, tableId: 'test', formula, computeMode, valueType: ValueType.Number, unit: '' };
 }
 
 // Simple resolve: Table.Field → cellId
@@ -123,7 +123,7 @@ describe('DAG - 传递依赖', () => {
 describe('DAG - 输入单元格', () => {
   it('ignores input cells as dependencies', () => {
     const cells: CellDefinition[] = [
-      { id: 'A', name: 'A', tableId: 'test', formula: '', type: CellType.Input, unit: '', defaultValue: 42 },
+      { id: 'A', name: 'A', tableId: 'test', formula: '', computeMode: ComputeMode.Input, valueType: ValueType.Number, unit: '', defaultValue: 42 },
       makeCell('B', '=test.A + 1'),
     ];
     const dag = buildTestDAG(cells);

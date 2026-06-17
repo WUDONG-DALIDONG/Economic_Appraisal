@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { buildServer } from '../src/server.js';
 import type { FastifyInstance } from 'fastify';
-import { ModelDefinition, CellType, ParameterType } from '@economic/core';
+import { ModelDefinition, ComputeMode, ValueType } from '@economic/core';
 
 describe('Model CRUD API', () => {
   let app: FastifyInstance;
@@ -20,8 +20,8 @@ describe('Model CRUD API', () => {
     version: '1.0.0',
     description: '用于API测试',
     tables: [{ id: 't1', name: '表1', order: 0 }],
-    cells: [{ id: 'c1', name: 'cell1', tableId: 't1', formula: '', type: CellType.Input, isArray: false }],
-    parameters: [{ id: 'p1', name: 'p1', type: ParameterType.Number, defaultValue: 10 }],
+    cells: [{ id: 'c1', name: 'cell1', tableId: 't1', formula: '', computeMode: ComputeMode.Input, valueType: ValueType.Number, isArray: false }],
+    parameters: [{ id: 'p1', name: 'p1', valueType: ValueType.Number, computeMode: ComputeMode.Input, defaultValue: 10 }],
     timeline: { constructionYears: 1, operationYears: 10, startYear: 2024, startMonth: 1 },
     metadata: {},
   };

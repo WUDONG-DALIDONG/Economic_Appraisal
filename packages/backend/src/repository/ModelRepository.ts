@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import { ModelDefinition, TableDefinition, CellDefinition, ParameterDefinition } from '@economic/core';
+import { ModelDefinition, TableDefinition, CellDefinition, ParameterDefinition, ComputeMode, ValueType } from '@economic/core';
 
 /**
  * ModelRepository provides CRUD operations for model definitions.
@@ -47,8 +47,8 @@ export class ModelRepository {
     for (const cell of model.cells) {
       this.db
         .prepare(
-          `INSERT INTO cells (id, table_id, model_id, name, code, parent_id, sort_order, formula, cell_type, unit, description, default_value, is_array, scope, precision)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          `INSERT INTO cells (id, table_id, model_id, name, code, parent_id, sort_order, formula, cell_type, value_type, unit, description, default_value, is_array, scope, precision, use_grouping)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           cell.id,
@@ -59,13 +59,15 @@ export class ModelRepository {
           cell.parentId ?? null,
           cell.sortOrder ?? 0,
           cell.formula,
-          cell.type,
+          cell.computeMode ?? ComputeMode.Input,
+          cell.valueType ?? ValueType.Number,
           cell.unit ?? null,
           cell.description ?? null,
           cell.defaultValue !== undefined ? JSON.stringify(cell.defaultValue) : null,
           1, // Force isArray = true — all cells are timeline arrays
           cell.scope ?? 'both',
-          cell.precision ?? null
+          cell.precision ?? null,
+          cell.useGrouping === false ? 0 : null
         );
     }
 
@@ -73,8 +75,8 @@ export class ModelRepository {
     for (const param of model.parameters) {
       this.db
         .prepare(
-          `INSERT INTO parameters (id, model_id, name, code, parent_id, sort_order, param_type, default_value, formula, min_value, max_value, unit, description, options_json, precision)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          `INSERT INTO parameters (id, model_id, name, code, parent_id, sort_order, param_type, compute_mode, default_value, formula, min_value, max_value, unit, description, options_json, precision, use_grouping)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           param.id,
@@ -83,7 +85,8 @@ export class ModelRepository {
           param.code ?? null,
           param.parentId ?? null,
           param.sortOrder ?? 0,
-          param.type,
+          param.valueType ?? ValueType.Number,
+          param.computeMode ?? (param.formula ? ComputeMode.Formula : ComputeMode.Input),
           JSON.stringify(param.defaultValue),
           param.formula ?? null,
           param.min ?? null,
@@ -91,7 +94,8 @@ export class ModelRepository {
           param.unit ?? null,
           param.description ?? null,
           param.options ? JSON.stringify(param.options) : null,
-          param.precision ?? null
+          param.precision ?? null,
+          param.useGrouping === false ? 0 : null
         );
     }
   }
@@ -158,7 +162,7 @@ export class ModelRepository {
 
       // Re-insert cells
       const insertCell = this.db.prepare(
-        `INSERT INTO cells (id, table_id, model_id, name, code, parent_id, sort_order, formula, cell_type, unit, description, default_value, is_array, scope, precision) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO cells (id, table_id, model_id, name, code, parent_id, sort_order, formula, cell_type, value_type, unit, description, default_value, is_array, scope, precision, use_grouping) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       );
       for (const cell of model.cells) {
         insertCell.run(
@@ -170,19 +174,21 @@ export class ModelRepository {
           cell.parentId ?? null,
           cell.sortOrder ?? 0,
           cell.formula,
-          cell.type,
+          cell.computeMode ?? ComputeMode.Input,
+          cell.valueType ?? ValueType.Number,
           cell.unit ?? null,
           cell.description ?? null,
           cell.defaultValue !== undefined ? JSON.stringify(cell.defaultValue) : null,
           1, // Force isArray = true — all cells are timeline arrays
           cell.scope ?? 'both',
-          cell.precision ?? null
+          cell.precision ?? null,
+          cell.useGrouping === false ? 0 : null
         );
       }
 
       // Re-insert parameters
       const insertParam = this.db.prepare(
-        `INSERT INTO parameters (id, model_id, name, code, parent_id, sort_order, param_type, default_value, formula, min_value, max_value, unit, description, options_json, precision) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO parameters (id, model_id, name, code, parent_id, sort_order, param_type, compute_mode, default_value, formula, min_value, max_value, unit, description, options_json, precision, use_grouping) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       );
       for (const param of model.parameters) {
         insertParam.run(
@@ -192,7 +198,8 @@ export class ModelRepository {
           param.code ?? null,
           param.parentId ?? null,
           param.sortOrder ?? 0,
-          param.type,
+          param.valueType ?? ValueType.Number,
+          param.computeMode ?? (param.formula ? ComputeMode.Formula : ComputeMode.Input),
           JSON.stringify(param.defaultValue),
           param.formula ?? null,
           param.min ?? null,
@@ -200,7 +207,8 @@ export class ModelRepository {
           param.unit ?? null,
           param.description ?? null,
           param.options ? JSON.stringify(param.options) : null,
-          param.precision ?? null
+          param.precision ?? null,
+          param.useGrouping === false ? 0 : null
         );
       }
     })();
@@ -256,13 +264,15 @@ export class ModelRepository {
       sortOrder: r.sort_order ?? 0,
       tableId: r.table_id,
       formula: r.formula,
-      type: r.cell_type as CellDefinition['type'],
+      computeMode: r.cell_type as CellDefinition['computeMode'],
+      valueType: (r as any).value_type as CellDefinition['valueType'] ?? ValueType.Number,
       unit: r.unit ?? undefined,
       description: r.description ?? undefined,
       defaultValue: r.default_value ? JSON.parse(r.default_value) : undefined,
       isArray: !!r.is_array,
       scope: (r.scope as CellDefinition['scope']) ?? 'both',
       precision: r.precision ?? undefined,
+      useGrouping: (r as any).use_grouping === 0 ? false : undefined,
     }));
   }
 
@@ -278,7 +288,8 @@ export class ModelRepository {
       code: r.code ?? undefined,
       parentId: r.parent_id ?? null,
       sortOrder: r.sort_order ?? 0,
-      type: r.param_type as ParameterDefinition['type'],
+      valueType: r.param_type as ParameterDefinition['valueType'],
+      computeMode: (r as any).compute_mode as ParameterDefinition['computeMode'] ?? (((r as any).formula ? ComputeMode.Formula : ComputeMode.Input) as ParameterDefinition['computeMode']),
       defaultValue: r.default_value ? JSON.parse(r.default_value) : undefined,
       formula: r.formula ?? undefined,
       unit: r.unit ?? undefined,
@@ -287,6 +298,7 @@ export class ModelRepository {
       max: r.max_value ?? undefined,
       options: r.options_json ? JSON.parse(r.options_json) : undefined,
       precision: r.precision ?? undefined,
+      useGrouping: (r as any).use_grouping === 0 ? false : undefined,
     }));
   }
 }
@@ -322,6 +334,7 @@ interface CellRow {
   sort_order: number;
   formula: string;
   cell_type: string;
+  value_type: string;
   unit: string | null;
   description: string | null;
   default_value: string | null;
@@ -337,6 +350,7 @@ interface ParameterRow {
   parent_id: string | null;
   sort_order: number;
   param_type: string;
+  compute_mode: string;
   default_value: string | null;
   formula: string | null;
   min_value: number | null;

@@ -1,11 +1,6 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import {
-  ModelDefinition,
-  CellDefinition,
-  ParameterDefinition,
-  formulaIdToDisplay,
-  formulaDisplayToId,
-} from '@economic/core';
+import React, { useState, useEffect, useCallback, useMemo, useRef, useImperativeHandle, forwardRef } from 'react';
+import { ModelDefinition, formulaIdToDisplay, formulaDisplayToId } from '@economic/core';
+import { useTheme } from '../ThemeContext.js';
 
 interface FormulaEditorProps {
   value: string;
@@ -13,19 +8,26 @@ interface FormulaEditorProps {
   model: ModelDefinition;
   currentCellId: string;
   mode?: 'compact' | 'expanded';
+  scope?: 'all' | 'parameters-only';
   onFocus?: () => void;
   onBlur?: () => void;
 }
 
-export const FormulaEditor: React.FC<FormulaEditorProps> = ({
+export interface FormulaEditorRef {
+  commit: () => void;
+}
+
+export const FormulaEditor = forwardRef<FormulaEditorRef, FormulaEditorProps>(({
   value,
   onChange,
   model,
   currentCellId,
   mode = 'expanded',
+  scope = 'all',
   onFocus,
   onBlur,
-}) => {
+}, ref) => {
+  const { theme } = useTheme();
   const [displayValue, setDisplayValue] = useState('');
   const [expanded, setExpanded] = useState(false);
   const [highlightIndex, setHighlightIndex] = useState(-1);
@@ -43,8 +45,8 @@ export const FormulaEditor: React.FC<FormulaEditorProps> = ({
   const idMaps = useMemo(() => buildIdMaps(model), [model]);
 
   const suggestions = useMemo(
-    () => getSuggestions(displayValue, model, currentCellId, idMaps),
-    [displayValue, model, currentCellId, idMaps]
+    () => getSuggestions(displayValue, model, currentCellId, idMaps, scope),
+    [displayValue, model, currentCellId, idMaps, scope]
   );
 
   useEffect(() => {
@@ -56,9 +58,10 @@ export const FormulaEditor: React.FC<FormulaEditorProps> = ({
       const idFormula = formulaDisplayToId(displayValue, model);
       if (idFormula !== value) onChange(idFormula);
     } catch {
-      /* keep local text */
     }
   }, [displayValue, model, onChange, value]);
+
+  useImperativeHandle(ref, () => ({ commit }), [commit]);
 
   const insertSuggestion = (s: Suggestion, mode: 'expand' | 'select') => {
     const info = getLastTablePrefix(displayValue);
@@ -121,10 +124,10 @@ export const FormulaEditor: React.FC<FormulaEditorProps> = ({
             fontWeight: 600,
             cursor: 'pointer',
             userSelect: 'none',
-            background: value ? '#e3f2fd' : '#f5f5f5',
-            color: value ? '#1976d2' : '#999',
+            background: value ? theme.bgPrimaryLight : theme.badgeNoValueBg,
+            color: value ? theme.accent : theme.badgeNoValueText,
             border: '1px solid',
-            borderColor: value ? '#bbdefb' : '#e0e0e0',
+            borderColor: value ? theme.badgeBorder : theme.badgeNoValueBorder,
             minWidth: 32,
           }}
         >
@@ -161,12 +164,12 @@ export const FormulaEditor: React.FC<FormulaEditorProps> = ({
             width: '100%',
             minWidth: 200,
             marginTop: 2,
-            border: '1px solid #ddd',
+            border: `1px solid ${theme.borderPrimary}`,
             borderRadius: 4,
-            background: '#fff',
+            background: theme.dropdownBg,
             maxHeight: 180,
             overflowY: 'auto',
-            boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+            boxShadow: theme.shadowDropdown,
           }}
         >
           {suggestions.map((s, idx) => {
@@ -200,12 +203,12 @@ export const FormulaEditor: React.FC<FormulaEditorProps> = ({
                   display: 'flex',
                   justifyContent: 'space-between',
                   gap: 12,
-                  borderBottom: '1px solid #f0f0f0',
-                  background: isHl ? '#e3f2fd' : '#fff',
+                  borderBottom: `1px solid ${theme.bgQuaternary}`,
+                  background: isHl ? theme.bgPrimaryLight : theme.dropdownBg,
                 }}
               >
                 <span style={{ fontWeight: 500 }}>{s.label}</span>
-                <span style={{ color: '#888', fontSize: 11, whiteSpace: 'nowrap' }}>
+                <span style={{ color: theme.textTertiary, fontSize: 11, whiteSpace: 'nowrap' }}>
                   {s.detail}
                 </span>
               </div>
@@ -215,7 +218,7 @@ export const FormulaEditor: React.FC<FormulaEditorProps> = ({
       )}
     </div>
   );
-};
+});
 
 /* ---------- Helpers ---------- */
 
@@ -272,7 +275,7 @@ function buildIdMaps(model: ModelDefinition): IdMaps {
       parts.unshift(pp.name);
       curId = pp.parentId ?? null;
     }
-    paramIdToPath.set(p.id, `参数.${parts.join('.')}`);
+    paramIdToPath.set(p.id, `全局参数.${parts.join('.')}`);
   }
 
   const paramPathToId = new Map<string, string>();
@@ -284,12 +287,12 @@ function buildIdMaps(model: ModelDefinition): IdMaps {
 }
 
 function cellToSuggestion(
-  cell: CellDefinition,
+  cell: any,
   idMaps: IdMaps,
   model: ModelDefinition
 ): Suggestion {
   const fullPath = idMaps.cellIdToPath.get(cell.id) ?? cell.name;
-  const hasChildren = model.cells.some((child) => child.parentId === cell.id);
+  const hasChildren = model.cells.some((child: any) => child.parentId === cell.id);
   return {
     label: fullPath,
     detail: hasChildren ? '▶' : '',
@@ -300,11 +303,11 @@ function cellToSuggestion(
 }
 
 function paramToSuggestion(
-  param: ParameterDefinition,
+  param: any,
   displayPath: string,
   model: ModelDefinition
 ): Suggestion {
-  const hasChildren = model.parameters.some((p) => p.parentId === param.id);
+  const hasChildren = model.parameters.some((p: any) => p.parentId === param.id);
   return {
     label: param.name,
     detail: hasChildren ? '▶' : '',
@@ -319,7 +322,8 @@ function getSuggestions(
   text: string,
   model: ModelDefinition,
   _currentCellId: string,
-  idMaps: IdMaps
+  idMaps: IdMaps,
+  scope: 'all' | 'parameters-only' = 'all'
 ): Suggestion[] {
   const trimmed = (text || '').trimEnd();
   if (!trimmed) return [];
@@ -328,43 +332,45 @@ function getSuggestions(
   if (!prefix) {
     const lastChar = trimmed.slice(-1);
     if (lastChar === '=' || lastChar === '' || /[+\-*/(),\s]/.test(lastChar)) {
-      return [
-        ...model.tables.map((t) => ({
+      const result: Suggestion[] = [];
+      if (scope !== 'parameters-only') {
+        result.push(...model.tables.map((t) => ({
           label: t.name,
           detail: '表 ▶',
           displayInsert: t.name + '.',
           isLeaf: false,
-        })),
-        { label: '参数', detail: '全局参数 ▶', displayInsert: '参数.', isLeaf: false },
-      ];
+        })));
+      }
+      result.push({ label: '全局参数', detail: '全局参数 ▶', displayInsert: '全局参数.', isLeaf: false });
+      return result;
     }
     return [];
   }
 
   const path = prefix.path;
 
-  if (path === '参数') {
-    const topLevel = model.parameters.filter((p) => !p.parentId);
-    return topLevel.map((p) =>
-      paramToSuggestion(p, '参数.' + p.name, model)
+  if (path === '全局参数') {
+    const topLevel = model.parameters.filter((p: any) => !p.parentId);
+    return topLevel.map((p: any) =>
+      paramToSuggestion(p, '全局参数.' + p.name, model)
     );
   }
 
-  const paramPrefix = '参数.';
+  const paramPrefix = '全局参数.';
   if (path.startsWith(paramPrefix)) {
     const segments = path.slice(paramPrefix.length).split('.');
-    let matchedParam: ParameterDefinition | undefined;
-    let currentCandidates = model.parameters.filter((p) => !p.parentId);
+    let matchedParam: any;
+    let currentCandidates = model.parameters.filter((p: any) => !p.parentId);
     for (const seg of segments) {
-      matchedParam = currentCandidates.find((p) => p.name === seg);
+      matchedParam = currentCandidates.find((p: any) => p.name === seg);
       if (!matchedParam) break;
-      currentCandidates = model.parameters.filter((p) => p.parentId === matchedParam!.id);
+      currentCandidates = model.parameters.filter((p: any) => p.parentId === matchedParam!.id);
     }
 
     if (matchedParam) {
-      const children = model.parameters.filter((p) => p.parentId === matchedParam!.id);
-      const parentPath = '参数.' + segments.join('.');
-      return children.map((p) =>
+      const children = model.parameters.filter((p: any) => p.parentId === matchedParam!.id);
+      const parentPath = '全局参数.' + segments.join('.');
+      return children.map((p: any) =>
         paramToSuggestion(p, parentPath + '.' + p.name, model)
       );
     }
@@ -372,10 +378,10 @@ function getSuggestions(
     if (segments.length > 0) {
       const lastSeg = segments[segments.length - 1];
       const candidates = model.parameters.filter(
-        (p) => !p.parentId && p.name.startsWith(lastSeg)
+        (p: any) => !p.parentId && p.name.startsWith(lastSeg)
       );
       if (candidates.length > 0) {
-        return candidates.map((p) =>
+        return candidates.map((p: any) =>
           paramToSuggestion(p, paramPrefix + p.name, model)
         );
       }
@@ -385,6 +391,8 @@ function getSuggestions(
 
   const parts = path.split('.');
   const tableName = parts[0];
+  if (scope === 'parameters-only' && tableName !== '全局参数') return [];
+
   const table = model.tables.find((t) => t.name === tableName);
   if (!table) return [];
 
@@ -392,31 +400,31 @@ function getSuggestions(
 
   if (parts.length === 1) {
     return model.cells
-      .filter((c) => c.tableId === table.id && c.parentId === null)
-      .map((cell) => cellToSuggestion(cell, idMaps, model));
+      .filter((c: any) => c.tableId === table.id && c.parentId === null)
+      .map((cell: any) => cellToSuggestion(cell, idMaps, model));
   }
 
   const cellId = cellPathToId.get(path);
   if (cellId) {
     const parentCell = model.cells.find(
-      (c) => c.id === cellId && c.tableId === table.id
+      (c: any) => c.id === cellId && c.tableId === table.id
     );
     if (parentCell) {
       const children = model.cells.filter(
-        (c) => c.tableId === table.id && c.parentId === parentCell.id
+        (c: any) => c.tableId === table.id && c.parentId === parentCell.id
       );
-      return children.map((cell) => cellToSuggestion(cell, idMaps, model));
+      return children.map((cell: any) => cellToSuggestion(cell, idMaps, model));
     }
   }
 
   const prefixWithDot = path + '.';
   const candidates = model.cells.filter(
-    (c) =>
+    (c: any) =>
       c.tableId === table.id &&
       (cellIdToPath.get(c.id) ?? '').startsWith(prefixWithDot)
   );
   if (candidates.length > 0) {
-    return candidates.map((cell) => cellToSuggestion(cell, idMaps, model));
+    return candidates.map((cell: any) => cellToSuggestion(cell, idMaps, model));
   }
 
   return [];

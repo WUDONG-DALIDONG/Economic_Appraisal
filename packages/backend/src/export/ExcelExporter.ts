@@ -88,19 +88,19 @@ export class ExcelExporter {
     const data: (string | number | null)[][] = [];
 
     // Header row
-    const header = ['指标', '类型', '单位'];
+    const header = ['指标', '计算方式', '值类型', '单位'];
     if (options.includeFormulas) header.push('公式');
     for (let t = 0; t <= maxTimeIndex; t++) {
       header.push(t === 0 ? '建设期' : `第${t}年`);
     }
     data.push(header);
 
-    // Cell rows
     for (const cell of cells) {
       const rows = resultsByCell.get(cell.id) || [];
       const row: (string | number | null)[] = [
         cell.name,
-        cell.type,
+        cell.computeMode,
+        cell.valueType ?? 'number',
         cell.unit ?? '',
       ];
       if (options.includeFormulas) row.push(cell.formula ?? '');
@@ -119,13 +119,14 @@ export class ExcelExporter {
 
   private createParametersSheet(params: ParameterDefinition[]): XLSX.WorkSheet {
     const data: (string | number | null)[][] = [
-      ['参数名', '当前值', '类型', '单位', '描述'],
+      ['参数名', '当前值', '值类型', '计算方式', '单位', '描述'],
     ];
     for (const p of params) {
       data.push([
         p.name,
         this.formatValue(p.defaultValue),
-        p.type,
+        p.valueType,
+        p.computeMode ?? 'Input',
         p.unit ?? '',
         p.description ?? '',
       ]);

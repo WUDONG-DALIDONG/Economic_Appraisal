@@ -8,11 +8,11 @@ import {
   ASTNode,
   ASTNodeType,
   CellDefinition,
-  CellType,
+  ComputeMode,
+  ValueType,
   TableDefinition,
   ModelDefinition,
   ParameterDefinition,
-  ParameterType,
   EvaluationResult,
 } from '../src/types';
 
@@ -158,13 +158,14 @@ describe('CellDefinition', () => {
       name: '静态投资额',
       tableId: 'table-1',
       formula: '=A1 + B1',
-      type: CellType.Formula,
+      computeMode: ComputeMode.Formula,
+      valueType: ValueType.Number,
       unit: '万元',
       description: '项目总投资',
     };
     expect(cell.id).toBe('cell-001');
     expect(cell.tableId).toBe('table-1');
-    expect(cell.type).toBe(CellType.Formula);
+    expect(cell.computeMode).toBe(ComputeMode.Formula);
   });
 
   it('supports Input cell type', () => {
@@ -173,11 +174,12 @@ describe('CellDefinition', () => {
       name: '建设期年数',
       tableId: 'table-1',
       formula: '',
-      type: CellType.Input,
+      computeMode: ComputeMode.Input,
+      valueType: ValueType.Number,
       unit: '年',
       defaultValue: 7,
     };
-    expect(cell.type).toBe(CellType.Input);
+    expect(cell.computeMode).toBe(ComputeMode.Input);
     expect(cell.defaultValue).toBe(7);
   });
 
@@ -187,10 +189,11 @@ describe('CellDefinition', () => {
       name: '复杂计算',
       tableId: 'table-1',
       formula: 'javascript:return 42;',
-      type: CellType.Script,
+      computeMode: ComputeMode.Script,
+      valueType: ValueType.Number,
       unit: '',
     };
-    expect(cell.type).toBe(CellType.Script);
+    expect(cell.computeMode).toBe(ComputeMode.Script);
   });
 });
 
@@ -261,14 +264,15 @@ describe('ParameterDefinition', () => {
     const param: ParameterDefinition = {
       id: 'param-001',
       name: '静态投资额',
-      type: ParameterType.Number,
+      valueType: ValueType.Number,
+      computeMode: ComputeMode.Input,
       defaultValue: 10000,
       min: 0,
       max: 1000000,
       unit: '万元',
       description: '项目总投资',
     };
-    expect(param.type).toBe(ParameterType.Number);
+    expect(param.valueType).toBe(ValueType.Number);
     expect(param.defaultValue).toBe(10000);
   });
 
@@ -276,14 +280,15 @@ describe('ParameterDefinition', () => {
     const param: ParameterDefinition = {
       id: 'param-002',
       name: '增值税率',
-      type: ParameterType.Percentage,
+      valueType: ValueType.Percentage,
+      computeMode: ComputeMode.Input,
       defaultValue: 0.13,
       min: 0,
       max: 1,
       unit: '%',
       description: '增值税税率',
     };
-    expect(param.type).toBe(ParameterType.Percentage);
+    expect(param.valueType).toBe(ValueType.Percentage);
     expect(param.defaultValue).toBe(0.13);
   });
 
@@ -291,13 +296,14 @@ describe('ParameterDefinition', () => {
     const param: ParameterDefinition = {
       id: 'param-003',
       name: '折旧方法',
-      type: ParameterType.Enum,
+      valueType: ValueType.Enum,
+      computeMode: ComputeMode.Input,
       defaultValue: '直线法',
       options: ['直线法', '双倍余额递减法', '年数总和法'],
       unit: '',
       description: '固定资产折旧方法',
     };
-    expect(param.type).toBe(ParameterType.Enum);
+    expect(param.valueType).toBe(ValueType.Enum);
     expect(param.options).toContain('直线法');
   });
 });

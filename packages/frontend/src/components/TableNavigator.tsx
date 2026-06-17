@@ -1,23 +1,25 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { TableDefinition, CellType } from '@economic/core';
+import { TableDefinition, ComputeMode, ValueType } from '@economic/core';
+import { useTheme } from '../ThemeContext.js';
 
 interface TableNavigatorProps {
   tables: TableDefinition[];
   activeId: string | null;
   onSelect: (id: string) => void;
-  onAdd: (table: TableDefinition, defaultCell: { id: string; tableId: string; name: string; formula: string; type: CellType; isArray: boolean; unit: string; sortOrder: number; parentId: null }) => void;
+  onAdd: (table: TableDefinition, defaultCell: { id: string; tableId: string; name: string; formula: string; computeMode: ComputeMode; valueType: ValueType; isArray: boolean; unit: string; sortOrder: number; parentId: null }) => void;
   onRename: (id: string, name: string) => void;
   onDelete: (id: string) => void;
+  onReorder: (tables: TableDefinition[]) => void;
 }
 
 export const TableNavigator: React.FC<TableNavigatorProps> = ({
-  tables, activeId, onSelect, onAdd, onRename, onDelete,
+  tables, activeId, onSelect, onAdd, onRename, onDelete, onReorder,
 }) => {
+  const { theme } = useTheme();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  // Close dropdown on outside click
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
@@ -33,7 +35,6 @@ export const TableNavigator: React.FC<TableNavigatorProps> = ({
     setOpenMenuId(null);
   };
 
-  /** Compute next "新表N" name avoiding gaps caused by renames. */
   const nextTableName = (): string => {
     let max = 0;
     for (const t of tables) {
@@ -51,21 +52,45 @@ export const TableNavigator: React.FC<TableNavigatorProps> = ({
       tableId,
       name: '新指标',
       formula: '',
-      type: CellType.Input,
+      computeMode: ComputeMode.Input,
+      valueType: ValueType.Number,
       isArray: true,
       unit: '',
       sortOrder: 0,
       parentId: null as null,
     };
     onAdd({ id: tableId, name, order: tables.length }, defaultCell);
-    // Auto-enter edit mode on next tick so the DOM input exists
     setTimeout(() => startEditing(tableId), 0);
   };
+
+  const moveTableLeft = (id: string) => {
+    const idx = tables.findIndex((t) => t.id === id);
+    if (idx <= 0) return;
+    const updated = [...tables];
+    [updated[idx - 1], updated[idx]] = [updated[idx], updated[idx - 1]];
+    onReorder(updated.map((t, i) => ({ ...t, order: i })));
+  };
+
+  const moveTableRight = (id: string) => {
+    const idx = tables.findIndex((t) => t.id === id);
+    if (idx < 0 || idx >= tables.length - 1) return;
+    const updated = [...tables];
+    [updated[idx], updated[idx + 1]] = [updated[idx + 1], updated[idx]];
+    onReorder(updated.map((t, i) => ({ ...t, order: i })));
+  };
+
+  const menuItemStyle = (isError?: boolean): React.CSSProperties => ({
+    padding: '6px 12px',
+    fontSize: 12,
+    cursor: 'pointer',
+    whiteSpace: 'nowrap',
+    color: isError ? theme.error : undefined,
+  });
 
   return (
     <div
       style={{
-        borderBottom: '1px solid #ddd',
+        borderBottom: `1px solid ${theme.borderPrimary}`,
         marginBottom: 16,
         display: 'flex',
         alignItems: 'center',
@@ -82,8 +107,8 @@ export const TableNavigator: React.FC<TableNavigatorProps> = ({
             padding: '6px 12px',
             borderRadius: 4,
             cursor: 'pointer',
-            background: activeId === t.id ? '#1976d2' : '#f5f5f5',
-            color: activeId === t.id ? '#fff' : '#333',
+            background: activeId === t.id ? theme.accent : theme.bgTertiary,
+            color: activeId === t.id ? theme.btnPrimaryText : theme.textPrimary,
             display: 'flex',
             alignItems: 'center',
             gap: 4,
@@ -111,7 +136,6 @@ export const TableNavigator: React.FC<TableNavigatorProps> = ({
             </span>
           )}
 
-          {/* 菜单触发器 */}
           <span
             onClick={(e) => {
               e.stopPropagation();
@@ -122,7 +146,6 @@ export const TableNavigator: React.FC<TableNavigatorProps> = ({
             ⋮
           </span>
 
-          {/* 下拉菜单 */}
           {openMenuId === t.id && (
             <div
               ref={menuRef}
@@ -131,10 +154,10 @@ export const TableNavigator: React.FC<TableNavigatorProps> = ({
                 top: '100%',
                 right: 0,
                 marginTop: 4,
-                background: '#fff',
-                border: '1px solid #ddd',
+                background: theme.dropdownBg,
+                border: `1px solid ${theme.borderPrimary}`,
                 borderRadius: 4,
-                boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+                boxShadow: theme.shadowDropdown,
                 zIndex: 10,
                 minWidth: 100,
               }}
@@ -144,18 +167,9 @@ export const TableNavigator: React.FC<TableNavigatorProps> = ({
                   e.stopPropagation();
                   startEditing(t.id);
                 }}
-                style={{
-                  padding: '6px 12px',
-                  fontSize: 12,
-                  cursor: 'pointer',
-                  whiteSpace: 'nowrap',
-                }}
-                onMouseEnter={(e) =>
-                  ((e.currentTarget as HTMLDivElement).style.background = '#f5f5f5')
-                }
-                onMouseLeave={(e) =>
-                  ((e.currentTarget as HTMLDivElement).style.background = '#fff')
-                }
+                style={menuItemStyle()}
+                onMouseEnter={(e) => ((e.currentTarget as HTMLDivElement).style.background = theme.dropdownHover)}
+                onMouseLeave={(e) => ((e.currentTarget as HTMLDivElement).style.background = theme.dropdownBg)}
               >
                 重命名
               </div>
@@ -163,21 +177,35 @@ export const TableNavigator: React.FC<TableNavigatorProps> = ({
                 onClick={(e) => {
                   e.stopPropagation();
                   setOpenMenuId(null);
+                  moveTableLeft(t.id);
+                }}
+                style={menuItemStyle()}
+                onMouseEnter={(e) => ((e.currentTarget as HTMLDivElement).style.background = theme.dropdownHover)}
+                onMouseLeave={(e) => ((e.currentTarget as HTMLDivElement).style.background = theme.dropdownBg)}
+              >
+                ← 左移
+              </div>
+              <div
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setOpenMenuId(null);
+                  moveTableRight(t.id);
+                }}
+                style={menuItemStyle()}
+                onMouseEnter={(e) => ((e.currentTarget as HTMLDivElement).style.background = theme.dropdownHover)}
+                onMouseLeave={(e) => ((e.currentTarget as HTMLDivElement).style.background = theme.dropdownBg)}
+              >
+                → 右移
+              </div>
+              <div
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setOpenMenuId(null);
                   onDelete(t.id);
                 }}
-                style={{
-                  padding: '6px 12px',
-                  fontSize: 12,
-                  cursor: 'pointer',
-                  color: '#c62828',
-                  whiteSpace: 'nowrap',
-                }}
-                onMouseEnter={(e) =>
-                  ((e.currentTarget as HTMLDivElement).style.background = '#f5f5f5')
-                }
-                onMouseLeave={(e) =>
-                  ((e.currentTarget as HTMLDivElement).style.background = '#fff')
-                }
+                style={menuItemStyle(true)}
+                onMouseEnter={(e) => ((e.currentTarget as HTMLDivElement).style.background = theme.dropdownHover)}
+                onMouseLeave={(e) => ((e.currentTarget as HTMLDivElement).style.background = theme.dropdownBg)}
               >
                 删除
               </div>

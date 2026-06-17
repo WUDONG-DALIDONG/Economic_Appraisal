@@ -1,4 +1,4 @@
-import { CellDefinition } from '../types';
+import { CellDefinition, ComputeMode } from '../types';
 
 export interface DAGNode {
   cellId: string;
@@ -36,7 +36,7 @@ export function buildDAG(
   
   for (const cell of cells) {
     const node = nodes.get(cell.id)!;
-    if (cell.type === 'Formula' || cell.type === 'Script') {
+    if (cell.computeMode === ComputeMode.Formula || cell.computeMode === ComputeMode.Script) {
       const deps = dependencyCollector(cell.formula, ctx);
       for (const depId of deps) {
         if (nodes.has(depId)) {

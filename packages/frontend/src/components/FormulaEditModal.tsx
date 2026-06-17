@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { ModelDefinition } from '@economic/core';
-import { FormulaEditor } from './FormulaEditor.js';
+import { FormulaEditor, FormulaEditorRef } from './FormulaEditor.js';
+import { useTheme } from '../ThemeContext.js';
 
 interface FormulaEditModalProps {
   cellName?: string;
@@ -11,6 +12,7 @@ interface FormulaEditModalProps {
   formula?: string;
   model: ModelDefinition;
   currentCellId?: string;
+  scope?: 'all' | 'parameters-only';
   onSave: (formula: string) => void;
   onClose: () => void;
 }
@@ -24,25 +26,22 @@ export const FormulaEditModal: React.FC<FormulaEditModalProps> = ({
   formula: formulaProp,
   model,
   currentCellId,
+  scope = 'all',
   onSave,
   onClose,
 }) => {
+  const { theme } = useTheme();
   const resolvedCellName = title || cellName || '';
   const resolvedCellCode = cellCode || '';
   const resolvedCellId = cellId || currentCellId || '';
   const resolvedInitialFormula = formulaProp || initialFormula || '';
   const [formula, setFormula] = useState(resolvedInitialFormula);
   const formulaRef = useRef(resolvedInitialFormula);
+  const editorRef = useRef<FormulaEditorRef>(null);
 
   const handleChange = (code: string) => {
     formulaRef.current = code;
     setFormula(code);
-  };
-
-  const handleOverlayClick = (e: React.MouseEvent) => {
-    if (e.target === e.currentTarget) {
-      onClose();
-    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -50,13 +49,17 @@ export const FormulaEditModal: React.FC<FormulaEditModalProps> = ({
   };
 
   const handleSave = () => {
+    editorRef.current?.commit();
     onSave(formulaRef.current);
     onClose();
   };
 
+  const handleSaveMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+  };
+
   return (
     <div
-      onClick={handleOverlayClick}
       onKeyDown={handleKeyDown}
       style={{
         position: 'fixed',
@@ -64,7 +67,7 @@ export const FormulaEditModal: React.FC<FormulaEditModalProps> = ({
         left: 0,
         right: 0,
         bottom: 0,
-        backgroundColor: 'rgba(0,0,0,0.1)',
+        backgroundColor: theme.bgOverlay,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -74,32 +77,30 @@ export const FormulaEditModal: React.FC<FormulaEditModalProps> = ({
     >
       <div
         style={{
-          background: '#fff',
+          background: theme.bgPrimary,
           borderRadius: 8,
-          boxShadow: '0 4px 20px rgba(0,0,0,0.2)',
+          boxShadow: theme.shadowModal,
           width: 640,
           maxWidth: '90vw',
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
         }}
-        onClick={(e) => e.stopPropagation()}
       >
-        {/* Header */}
         <div
           style={{
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
             padding: '16px 20px',
-            borderBottom: '1px solid #e0e0e0',
+            borderBottom: `1px solid ${theme.borderTertiary}`,
           }}
         >
           <div>
-            <div style={{ fontSize: 16, fontWeight: 600, color: '#333' }}>
+            <div style={{ fontSize: 16, fontWeight: 600, color: theme.textPrimary }}>
               编辑公式
             </div>
-            <div style={{ fontSize: 13, color: '#666', marginTop: 4 }}>
+            <div style={{ fontSize: 13, color: theme.textSecondary, marginTop: 4 }}>
               {resolvedCellName}
               {resolvedCellCode ? ` (${resolvedCellCode})` : ''}
             </div>
@@ -111,7 +112,7 @@ export const FormulaEditModal: React.FC<FormulaEditModalProps> = ({
               background: 'transparent',
               fontSize: 20,
               cursor: 'pointer',
-              color: '#999',
+              color: theme.textPlaceholder,
               padding: '0 4px',
             }}
           >
@@ -119,18 +120,18 @@ export const FormulaEditModal: React.FC<FormulaEditModalProps> = ({
           </button>
         </div>
 
-        {/* Body */}
         <div style={{ padding: '20px' }}>
           <FormulaEditor
+            ref={editorRef}
             value={formula}
             onChange={handleChange}
             model={model}
             currentCellId={resolvedCellId}
             mode="expanded"
+            scope={scope}
           />
         </div>
 
-        {/* Footer */}
         <div
           style={{
             display: 'flex',
@@ -140,12 +141,14 @@ export const FormulaEditModal: React.FC<FormulaEditModalProps> = ({
           }}
         >
           <button
+            onMouseDown={handleSaveMouseDown}
             onClick={onClose}
             style={{
               padding: '8px 20px',
               borderRadius: 4,
-              border: '1px solid #d9d9d9',
-              background: '#fff',
+              border: `1px solid ${theme.inputBorder}`,
+              background: theme.btnOutlineBg,
+              color: theme.textPrimary,
               cursor: 'pointer',
               fontSize: 14,
             }}
@@ -153,13 +156,14 @@ export const FormulaEditModal: React.FC<FormulaEditModalProps> = ({
             取消
           </button>
           <button
+            onMouseDown={handleSaveMouseDown}
             onClick={handleSave}
             style={{
               padding: '8px 20px',
               borderRadius: 4,
               border: 'none',
-              background: '#1976d2',
-              color: '#fff',
+              background: theme.btnPrimaryBg,
+              color: theme.btnPrimaryText,
               cursor: 'pointer',
               fontSize: 14,
             }}

@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import { initSchema } from './repository/initDb.js';
 import { ModelRepository } from './repository/ModelRepository.js';
 import { ResultRepository } from './repository/ResultRepository.js';
-import { ModelDefinition, CellType, ParameterType } from '@economic/core';
+import { ModelDefinition, ComputeMode, ValueType } from '@economic/core';
 
 // Auto-exported from model "测试模型" (光储-001) on 2026-06-14T15:13:16.857Z
 export const sampleModel: ModelDefinition = {
@@ -27,7 +27,8 @@ export const sampleModel: ModelDefinition = {
       "sortOrder": 0,
       "tableId": "t1",
       "formula": "",
-      "type": "Input",
+      "computeMode": "Input",
+      "valueType": "number",
       "unit": "",
       "isArray": true,
       "scope": "both"
@@ -40,7 +41,8 @@ export const sampleModel: ModelDefinition = {
       "sortOrder": 1,
       "tableId": "t1",
       "formula": "",
-      "type": "Input",
+      "computeMode": "Input",
+      "valueType": "number",
       "unit": "",
       "isArray": true,
       "scope": "both"
@@ -53,7 +55,8 @@ export const sampleModel: ModelDefinition = {
       "sortOrder": 2,
       "tableId": "t1",
       "formula": "",
-      "type": "Input",
+      "computeMode": "Input",
+      "valueType": "number",
       "unit": "",
       "isArray": true,
       "scope": "both"
@@ -66,7 +69,8 @@ export const sampleModel: ModelDefinition = {
       "sortOrder": 3,
       "tableId": "t1",
       "formula": "",
-      "type": "Input",
+      "computeMode": "Input",
+      "valueType": "number",
       "unit": "",
       "isArray": true,
       "scope": "both"
@@ -79,7 +83,8 @@ export const sampleModel: ModelDefinition = {
       "sortOrder": 4,
       "tableId": "t1",
       "formula": "",
-      "type": "Input",
+      "computeMode": "Input",
+      "valueType": "number",
       "unit": "",
       "isArray": true,
       "scope": "both"
@@ -92,7 +97,8 @@ export const sampleModel: ModelDefinition = {
       "sortOrder": 5,
       "tableId": "t1",
       "formula": "",
-      "type": "Input",
+      "computeMode": "Input",
+      "valueType": "number",
       "unit": "",
       "isArray": true,
       "scope": "both"
@@ -105,7 +111,8 @@ export const sampleModel: ModelDefinition = {
       "sortOrder": 6,
       "tableId": "t1",
       "formula": "",
-      "type": "Input",
+      "computeMode": "Input",
+      "valueType": "number",
       "unit": "",
       "isArray": true,
       "scope": "both"
@@ -118,7 +125,8 @@ export const sampleModel: ModelDefinition = {
       "sortOrder": 7,
       "tableId": "t1",
       "formula": "",
-      "type": "Input",
+      "computeMode": "Input",
+      "valueType": "number",
       "unit": "",
       "isArray": true,
       "scope": "both"
@@ -131,7 +139,8 @@ export const sampleModel: ModelDefinition = {
       "sortOrder": 8,
       "tableId": "t1",
       "formula": "",
-      "type": "Input",
+      "computeMode": "Input",
+      "valueType": "number",
       "unit": "",
       "isArray": true,
       "scope": "both"
@@ -144,7 +153,8 @@ export const sampleModel: ModelDefinition = {
       "sortOrder": 9,
       "tableId": "t1",
       "formula": "",
-      "type": "Input",
+      "computeMode": "Input",
+      "valueType": "number",
       "unit": "",
       "isArray": true,
       "scope": "both"
@@ -157,7 +167,8 @@ export const sampleModel: ModelDefinition = {
       "sortOrder": 10,
       "tableId": "t1",
       "formula": "",
-      "type": "Input",
+      "computeMode": "Input",
+      "valueType": "number",
       "unit": "",
       "isArray": true,
       "scope": "both"
@@ -170,7 +181,8 @@ export const sampleModel: ModelDefinition = {
       "sortOrder": 11,
       "tableId": "t1",
       "formula": "",
-      "type": "Input",
+      "computeMode": "Input",
+      "valueType": "number",
       "unit": "",
       "isArray": true,
       "scope": "both"
@@ -183,7 +195,8 @@ export const sampleModel: ModelDefinition = {
       "sortOrder": 12,
       "tableId": "t1",
       "formula": "",
-      "type": "Input",
+      "computeMode": "Input",
+      "valueType": "number",
       "unit": "",
       "isArray": true,
       "scope": "both"
@@ -196,7 +209,8 @@ export const sampleModel: ModelDefinition = {
       "sortOrder": 13,
       "tableId": "t1",
       "formula": "",
-      "type": "Input",
+      "computeMode": "Input",
+      "valueType": "number",
       "unit": "",
       "isArray": true,
       "scope": "both"
@@ -206,7 +220,8 @@ export const sampleModel: ModelDefinition = {
     {
       "id": "p1",
       "name": "装机容量",
-      "type": "number",
+      "valueType": "number",
+      "computeMode": "Input",
       "defaultValue": 100,
       "unit": "MW",
       "description": "光伏装机容量"
@@ -214,7 +229,8 @@ export const sampleModel: ModelDefinition = {
     {
       "id": "p2",
       "name": "建设期利息贷款利率",
-      "type": "percentage",
+      "valueType": "percentage",
+      "computeMode": "Input",
       "defaultValue": 3.5,
       "unit": "",
       "description": "建设期时长（年）"
@@ -222,7 +238,8 @@ export const sampleModel: ModelDefinition = {
     {
       "id": "p3",
       "name": "项目静态总投资",
-      "type": "number",
+      "valueType": "number",
+      "computeMode": "Input",
       "defaultValue": 26700,
       "unit": "年",
       "description": "运营期时长（年）"

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { buildServer } from '../src/server.js';
 import type { FastifyInstance } from 'fastify';
-import { ModelDefinition, CellType, ParameterType } from '@economic/core';
+import { ModelDefinition, ComputeMode, ValueType } from '@economic/core';
 
 describe('Compute API', () => {
   let app: FastifyInstance;
@@ -16,10 +16,10 @@ describe('Compute API', () => {
       description: '',
       tables: [{ id: 't1', name: '表1', order: 0 }],
       cells: [
-        { id: 'a', name: 'A', tableId: 't1', formula: '', type: CellType.Input, defaultValue: 10, isArray: false },
-        { id: 'b', name: 'B', tableId: 't1', formula: '=a+5', type: CellType.Formula, isArray: false },
+        { id: 'a', name: 'A', tableId: 't1', formula: '', computeMode: ComputeMode.Input, valueType: ValueType.Number, defaultValue: 10, isArray: false },
+        { id: 'b', name: 'B', tableId: 't1', formula: '=a+5', computeMode: ComputeMode.Formula, valueType: ValueType.Number, isArray: false },
       ],
-      parameters: [{ id: 'rate', name: 'Rate', type: ParameterType.Number, defaultValue: 2 }],
+      parameters: [{ id: 'rate', name: 'Rate', valueType: ValueType.Number, computeMode: ComputeMode.Input, defaultValue: 2 }],
       timeline: { constructionYears: 0, operationYears: 1, startYear: 2024, startMonth: 1 },
       metadata: { author: '', createdAt: '', updatedAt: '' },
     };
@@ -62,7 +62,7 @@ describe('Compute API', () => {
     expect(res.statusCode).toBe(404);
   });
 
-  it('supports 参数.名称 referencing in formulas', async () => {
+  it('supports 全局参数.名称 referencing in formulas', async () => {
     const model: ModelDefinition = {
       id: 'param-ref-test',
       name: '参数引用测试',
@@ -70,9 +70,9 @@ describe('Compute API', () => {
       description: '',
       tables: [{ id: 't2', name: '表2', order: 0 }],
       cells: [
-        { id: 'c1', name: 'C1', tableId: 't2', formula: '=参数.上网电价 * 100', type: CellType.Formula, isArray: false },
+        { id: 'c1', name: 'C1', tableId: 't2', formula: '=全局参数.上网电价 * 100', computeMode: ComputeMode.Formula, valueType: ValueType.Number, isArray: false },
       ],
-      parameters: [{ id: 'p-e', name: '上网电价', type: ParameterType.Number, defaultValue: 0.5 }],
+      parameters: [{ id: 'p-e', name: '上网电价', valueType: ValueType.Number, computeMode: ComputeMode.Input, defaultValue: 0.5 }],
       timeline: { constructionYears: 0, operationYears: 1, startYear: 2024, startMonth: 1 },
       metadata: { author: '', createdAt: '', updatedAt: '' },
     };
@@ -98,12 +98,12 @@ describe('Compute API', () => {
       description: '',
       tables: [{ id: 't3', name: '表3', order: 0 }],
       cells: [
-        { id: 'c2', name: 'C2', tableId: 't3', formula: '=参数.合计电价 + 参数.基础电价', type: CellType.Formula, isArray: false },
+        { id: 'c2', name: 'C2', tableId: 't3', formula: '=全局参数.合计电价 + 全局参数.基础电价', computeMode: ComputeMode.Formula, valueType: ValueType.Number, isArray: false },
       ],
       parameters: [
-        { id: 'p-base', name: '基础电价', type: ParameterType.Number, defaultValue: 0.3 },
-        { id: 'p-add', name: '补贴', type: ParameterType.Number, defaultValue: 0.05, formula: '=参数.基础电价 * 0.1' },
-        { id: 'p-total', name: '合计电价', type: ParameterType.Number, defaultValue: 0, formula: '=参数.基础电价 + 参数.补贴' },
+        { id: 'p-base', name: '基础电价', valueType: ValueType.Number, computeMode: ComputeMode.Input, defaultValue: 0.3 },
+        { id: 'p-add', name: '补贴', valueType: ValueType.Number, computeMode: ComputeMode.Formula, defaultValue: 0.05, formula: '=全局参数.基础电价 * 0.1' },
+        { id: 'p-total', name: '合计电价', valueType: ValueType.Number, computeMode: ComputeMode.Formula, defaultValue: 0, formula: '=全局参数.基础电价 + 全局参数.补贴' },
       ],
       timeline: { constructionYears: 0, operationYears: 1, startYear: 2024, startMonth: 1 },
       metadata: { author: '', createdAt: '', updatedAt: '' },
@@ -126,8 +126,8 @@ describe('Compute API', () => {
       description: '',
       tables: [{ id: 't4', name: '表4', order: 0 }],
       cells: [
-        { id: 'a1', name: '当年值', code: '1', tableId: 't4', formula: '', type: CellType.Input, defaultValue: [10, 20, 30, 40], isArray: true },
-        { id: 'a2', name: '累计值', code: '2', tableId: 't4', formula: '=表4.1[t-1] + 表4.1', type: CellType.Formula, isArray: true },
+        { id: 'a1', name: '当年值', code: '1', tableId: 't4', formula: '', computeMode: ComputeMode.Input, valueType: ValueType.Number, defaultValue: [10, 20, 30, 40], isArray: true },
+        { id: 'a2', name: '累计值', code: '2', tableId: 't4', formula: '=表4.1[t-1] + 表4.1', computeMode: ComputeMode.Formula, valueType: ValueType.Number, isArray: true },
       ],
       parameters: [],
       timeline: { constructionYears: 0, operationYears: 4, startYear: 2024, startMonth: 1 },
@@ -166,14 +166,14 @@ describe('Compute API', () => {
         // 建设期 Input，只在 t=0,1 有值
         {
           id: 'c-base', name: '建设投资', code: '1', tableId: 'st',
-          formula: '', type: CellType.Input,
+          formula: '', computeMode: ComputeMode.Input, valueType: ValueType.Number,
           defaultValue: [100, 200], scope: 'construction',
           isArray: true
         },
         // 运营期 Formula，引用了建设期 Input，公式在 t=2,3,4 计算
         {
           id: 'c-op', name: '运营费用', code: '2', tableId: 'st',
-          formula: '=资金表.1 + 10', type: CellType.Formula,
+          formula: '=资金表.1 + 10', computeMode: ComputeMode.Formula, valueType: ValueType.Number,
           scope: 'operation', isArray: true
         },
       ],

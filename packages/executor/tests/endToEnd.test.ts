@@ -6,7 +6,7 @@ import { buildDAG } from '@economic/core/src/dag/engine';
 import { collectDependencies } from '@economic/core/src/dag/dependencyExtractor';
 import { ASTCompiler } from '../src/compiler/ASTCompiler';
 import { SafeVM } from '../src/vm/SafeVM';
-import { TimeContext, CellValue, CellDefinition, CellType } from '@economic/core';
+import { TimeContext, CellValue, CellDefinition, ComputeMode, ValueType } from '@economic/core';
 
 // ---------------------------------------------------------------------------
 // Shared Helpers
@@ -62,37 +62,37 @@ function compileAndRun(formula: string, vmCtx: any): CellValue {
 
 const LS_CELLS: CellDefinition[] = [
   // Inputs
-  { id: 'pvCapacity', name: '光伏装机', tableId: 'input', formula: '', type: CellType.Input, unit: 'MW', defaultValue: 200, isArray: false },
-  { id: 'storageCapacity', name: '储能装机', tableId: 'input', formula: '', type: CellType.Input, unit: 'MWh', defaultValue: 100, isArray: false },
-  { id: 'pvUnitCost', name: '光伏单位造价', tableId: 'input', formula: '', type: CellType.Input, unit: '元/W', defaultValue: 3.2, isArray: false },
-  { id: 'storageUnitCost', name: '储能单位造价', tableId: 'input', formula: '', type: CellType.Input, unit: '元/Wh', defaultValue: 1.5, isArray: false },
-  { id: 'decayRate', name: '光伏衰减率', tableId: 'input', formula: '', type: CellType.Input, unit: '%', defaultValue: 0.08, isArray: false },
-  { id: 'price', name: '上网电价', tableId: 'input', formula: '', type: CellType.Input, unit: '元/kWh', defaultValue: 0.35, isArray: false },
-  { id: 'oamRate', name: '运维费率', tableId: 'input', formula: '', type: CellType.Input, unit: '%', defaultValue: 0.04, isArray: false },
-  { id: 'utilHours', name: '利用小时数', tableId: 'input', formula: '', type: CellType.Input, unit: 'h', defaultValue: 1200, isArray: false },
-  { id: 'taxRate', name: '所得税率', tableId: 'input', formula: '', type: CellType.Input, unit: '%', defaultValue: 0.25, isArray: false },
+  { id: 'pvCapacity', name: '光伏装机', tableId: 'input', formula: '', computeMode: ComputeMode.Input, valueType: ValueType.Number, unit: 'MW', defaultValue: 200, isArray: false },
+  { id: 'storageCapacity', name: '储能装机', tableId: 'input', formula: '', computeMode: ComputeMode.Input, valueType: ValueType.Number, unit: 'MWh', defaultValue: 100, isArray: false },
+  { id: 'pvUnitCost', name: '光伏单位造价', tableId: 'input', formula: '', computeMode: ComputeMode.Input, valueType: ValueType.Number, unit: '元/W', defaultValue: 3.2, isArray: false },
+  { id: 'storageUnitCost', name: '储能单位造价', tableId: 'input', formula: '', computeMode: ComputeMode.Input, valueType: ValueType.Number, unit: '元/Wh', defaultValue: 1.5, isArray: false },
+  { id: 'decayRate', name: '光伏衰减率', tableId: 'input', formula: '', computeMode: ComputeMode.Input, valueType: ValueType.Number, unit: '%', defaultValue: 0.08, isArray: false },
+  { id: 'price', name: '上网电价', tableId: 'input', formula: '', computeMode: ComputeMode.Input, valueType: ValueType.Number, unit: '元/kWh', defaultValue: 0.35, isArray: false },
+  { id: 'oamRate', name: '运维费率', tableId: 'input', formula: '', computeMode: ComputeMode.Input, valueType: ValueType.Number, unit: '%', defaultValue: 0.04, isArray: false },
+  { id: 'utilHours', name: '利用小时数', tableId: 'input', formula: '', computeMode: ComputeMode.Input, valueType: ValueType.Number, unit: 'h', defaultValue: 1200, isArray: false },
+  { id: 'taxRate', name: '所得税率', tableId: 'input', formula: '', computeMode: ComputeMode.Input, valueType: ValueType.Number, unit: '%', defaultValue: 0.25, isArray: false },
 
   // Investment
-  { id: 'pvInvest', name: '光伏投资', tableId: 'invest', formula: '=input.光伏装机 * input.光伏单位造价', type: CellType.Formula, unit: '万元', isArray: false },
-  { id: 'storageInvest', name: '储能投资', tableId: 'invest', formula: '=input.储能装机 * input.储能单位造价', type: CellType.Formula, unit: '万元', isArray: false },
-  { id: 'totalInvest', name: '总投资', tableId: 'invest', formula: '=invest.光伏投资 + invest.储能投资', type: CellType.Formula, unit: '万元', isArray: false },
+  { id: 'pvInvest', name: '光伏投资', tableId: 'invest', formula: '=input.光伏装机 * input.光伏单位造价', computeMode: ComputeMode.Formula, valueType: ValueType.Number, unit: '万元', isArray: false },
+  { id: 'storageInvest', name: '储能投资', tableId: 'invest', formula: '=input.储能装机 * input.储能单位造价', computeMode: ComputeMode.Formula, valueType: ValueType.Number, unit: '万元', isArray: false },
+  { id: 'totalInvest', name: '总投资', tableId: 'invest', formula: '=invest.光伏投资 + invest.储能投资', computeMode: ComputeMode.Formula, valueType: ValueType.Number, unit: '万元', isArray: false },
 
   // Operating
-  { id: 'genFactor', name: '发电衰减系数', tableId: 'op', formula: '=POWER(1-input.光伏衰减率, t-1)', type: CellType.Formula, unit: '', isArray: true },
-  { id: 'generation', name: '年发电量', tableId: 'op', formula: '=input.光伏装机 * input.利用小时数 * op.发电衰减系数[t]', type: CellType.Formula, unit: '万kWh', isArray: true },
-  { id: 'revenue', name: '年收入', tableId: 'op', formula: '=op.年发电量[t] * input.上网电价', type: CellType.Formula, unit: '万元', isArray: true },
-  { id: 'oamCost', name: '年运维费', tableId: 'op', formula: '=op.年收入[t] * input.运维费率', type: CellType.Formula, unit: '万元', isArray: true },
-  { id: 'depreciation', name: '年折旧', tableId: 'op', formula: '=invest.总投资 / 20', type: CellType.Formula, unit: '万元', isArray: true },
-  { id: 'ebit', name: '息税前利润', tableId: 'op', formula: '=op.年收入[t] - op.年运维费[t] - op.年折旧[t]', type: CellType.Formula, unit: '万元', isArray: true },
-  { id: 'taxShield', name: '折旧税盾', tableId: 'op', formula: '=op.年折旧[t] * input.所得税率', type: CellType.Formula, unit: '万元', isArray: true },
-  { id: 'netProfit', name: '净利润', tableId: 'op', formula: '=op.息税前利润[t] * (1-input.所得税率)', type: CellType.Formula, unit: '万元', isArray: true },
-  { id: 'cf', name: '经营现金流', tableId: 'op', formula: '=op.净利润[t] + op.年折旧[t]', type: CellType.Formula, unit: '万元', isArray: true },
+  { id: 'genFactor', name: '发电衰减系数', tableId: 'op', formula: '=POWER(1-input.光伏衰减率, t-1)', computeMode: ComputeMode.Formula, valueType: ValueType.Number, unit: '', isArray: true },
+  { id: 'generation', name: '年发电量', tableId: 'op', formula: '=input.光伏装机 * input.利用小时数 * op.发电衰减系数[t]', computeMode: ComputeMode.Formula, valueType: ValueType.Number, unit: '万kWh', isArray: true },
+  { id: 'revenue', name: '年收入', tableId: 'op', formula: '=op.年发电量[t] * input.上网电价', computeMode: ComputeMode.Formula, valueType: ValueType.Number, unit: '万元', isArray: true },
+  { id: 'oamCost', name: '年运维费', tableId: 'op', formula: '=op.年收入[t] * input.运维费率', computeMode: ComputeMode.Formula, valueType: ValueType.Number, unit: '万元', isArray: true },
+  { id: 'depreciation', name: '年折旧', tableId: 'op', formula: '=invest.总投资 / 20', computeMode: ComputeMode.Formula, valueType: ValueType.Number, unit: '万元', isArray: true },
+  { id: 'ebit', name: '息税前利润', tableId: 'op', formula: '=op.年收入[t] - op.年运维费[t] - op.年折旧[t]', computeMode: ComputeMode.Formula, valueType: ValueType.Number, unit: '万元', isArray: true },
+  { id: 'taxShield', name: '折旧税盾', tableId: 'op', formula: '=op.年折旧[t] * input.所得税率', computeMode: ComputeMode.Formula, valueType: ValueType.Number, unit: '万元', isArray: true },
+  { id: 'netProfit', name: '净利润', tableId: 'op', formula: '=op.息税前利润[t] * (1-input.所得税率)', computeMode: ComputeMode.Formula, valueType: ValueType.Number, unit: '万元', isArray: true },
+  { id: 'cf', name: '经营现金流', tableId: 'op', formula: '=op.净利润[t] + op.年折旧[t]', computeMode: ComputeMode.Formula, valueType: ValueType.Number, unit: '万元', isArray: true },
 ];
 
 describe('光储 Light-Storage E2E', () => {
   it('parses all cells', () => {
     for (const c of LS_CELLS) {
-      if (c.type === CellType.Formula) expect(parse(c.formula)).toBeDefined();
+      if (c.computeMode === ComputeMode.Formula) expect(parse(c.formula)).toBeDefined();
     }
   });
 
@@ -229,33 +229,33 @@ describe('光储 Light-Storage E2E', () => {
 
 const DC_CELLS: CellDefinition[] = [
   // Inputs
-  { id: 'itLoad', name: 'IT负载', tableId: 'input', formula: '', type: CellType.Input, unit: 'MW', defaultValue: 50, isArray: false },
-  { id: 'pue', name: 'PUE', tableId: 'input', formula: '', type: CellType.Input, unit: '', defaultValue: 1.25, isArray: false },
-  { id: 'gridPrice', name: '市电电价', tableId: 'input', formula: '', type: CellType.Input, unit: '元/kWh', defaultValue: 0.60, isArray: false },
-  { id: 'selfRate', name: '自备电比例', tableId: 'input', formula: '', type: CellType.Input, unit: '%', defaultValue: 0.30, isArray: false },
-  { id: 'selfCost', name: '自备电成本', tableId: 'input', formula: '', type: CellType.Input, unit: '元/kWh', defaultValue: 0.25, isArray: false },
-  { id: 'dcCapex', name: '数据中心投资', tableId: 'input', formula: '', type: CellType.Input, unit: '万元', defaultValue: 5000, isArray: false },
-  { id: 'renewCapex', name: '新能源投资', tableId: 'input', formula: '', type: CellType.Input, unit: '万元', defaultValue: 3000, isArray: false },
-  { id: 'hoursPerYear', name: '年运行小时', tableId: 'input', formula: '', type: CellType.Input, unit: 'h', defaultValue: 8760, isArray: false },
+  { id: 'itLoad', name: 'IT负载', tableId: 'input', formula: '', computeMode: ComputeMode.Input, valueType: ValueType.Number, unit: 'MW', defaultValue: 50, isArray: false },
+  { id: 'pue', name: 'PUE', tableId: 'input', formula: '', computeMode: ComputeMode.Input, valueType: ValueType.Number, unit: '', defaultValue: 1.25, isArray: false },
+  { id: 'gridPrice', name: '市电电价', tableId: 'input', formula: '', computeMode: ComputeMode.Input, valueType: ValueType.Number, unit: '元/kWh', defaultValue: 0.60, isArray: false },
+  { id: 'selfRate', name: '自备电比例', tableId: 'input', formula: '', computeMode: ComputeMode.Input, valueType: ValueType.Number, unit: '%', defaultValue: 0.30, isArray: false },
+  { id: 'selfCost', name: '自备电成本', tableId: 'input', formula: '', computeMode: ComputeMode.Input, valueType: ValueType.Number, unit: '元/kWh', defaultValue: 0.25, isArray: false },
+  { id: 'dcCapex', name: '数据中心投资', tableId: 'input', formula: '', computeMode: ComputeMode.Input, valueType: ValueType.Number, unit: '万元', defaultValue: 5000, isArray: false },
+  { id: 'renewCapex', name: '新能源投资', tableId: 'input', formula: '', computeMode: ComputeMode.Input, valueType: ValueType.Number, unit: '万元', defaultValue: 3000, isArray: false },
+  { id: 'hoursPerYear', name: '年运行小时', tableId: 'input', formula: '', computeMode: ComputeMode.Input, valueType: ValueType.Number, unit: 'h', defaultValue: 8760, isArray: false },
 
   // Power
-  { id: 'totalPower', name: '总用电量', tableId: 'power', formula: '=input.IT负载 * input.PUE * input.年运行小时', type: CellType.Formula, unit: '万kWh', isArray: false },
-  { id: 'selfPower', name: '自备电量', tableId: 'power', formula: '=power.总用电量 * input.自备电比例', type: CellType.Formula, unit: '万kWh', isArray: false },
-  { id: 'gridPower', name: '市电电量', tableId: 'power', formula: '=power.总用电量 - power.自备电量', type: CellType.Formula, unit: '万kWh', isArray: false },
+  { id: 'totalPower', name: '总用电量', tableId: 'power', formula: '=input.IT负载 * input.PUE * input.年运行小时', computeMode: ComputeMode.Formula, valueType: ValueType.Number, unit: '万kWh', isArray: false },
+  { id: 'selfPower', name: '自备电量', tableId: 'power', formula: '=power.总用电量 * input.自备电比例', computeMode: ComputeMode.Formula, valueType: ValueType.Number, unit: '万kWh', isArray: false },
+  { id: 'gridPower', name: '市电电量', tableId: 'power', formula: '=power.总用电量 - power.自备电量', computeMode: ComputeMode.Formula, valueType: ValueType.Number, unit: '万kWh', isArray: false },
 
   // Cost
-  { id: 'selfCostYear', name: '自备电成本', tableId: 'cost', formula: '=power.自备电量 * input.自备电成本', type: CellType.Formula, unit: '万元', isArray: false },
-  { id: 'gridCostYear', name: '市电成本', tableId: 'cost', formula: '=power.市电电量 * input.市电电价', type: CellType.Formula, unit: '万元', isArray: false },
-  { id: 'totalElecCost', name: '总电费', tableId: 'cost', formula: '=cost.自备电成本 + cost.市电成本', type: CellType.Formula, unit: '万元', isArray: false },
+  { id: 'selfCostYear', name: '自备电成本', tableId: 'cost', formula: '=power.自备电量 * input.自备电成本', computeMode: ComputeMode.Formula, valueType: ValueType.Number, unit: '万元', isArray: false },
+  { id: 'gridCostYear', name: '市电成本', tableId: 'cost', formula: '=power.市电电量 * input.市电电价', computeMode: ComputeMode.Formula, valueType: ValueType.Number, unit: '万元', isArray: false },
+  { id: 'totalElecCost', name: '总电费', tableId: 'cost', formula: '=cost.自备电成本 + cost.市电成本', computeMode: ComputeMode.Formula, valueType: ValueType.Number, unit: '万元', isArray: false },
 
   // Invest
-  { id: 'totalCapex', name: '总投资', tableId: 'invest', formula: '=input.数据中心投资 + input.新能源投资', type: CellType.Formula, unit: '万元', isArray: false },
+  { id: 'totalCapex', name: '总投资', tableId: 'invest', formula: '=input.数据中心投资 + input.新能源投资', computeMode: ComputeMode.Formula, valueType: ValueType.Number, unit: '万元', isArray: false },
 ];
 
 describe('数据中心 Data-Center E2E', () => {
   it('parses all cells', () => {
     for (const c of DC_CELLS) {
-      if (c.type === CellType.Formula) expect(parse(c.formula)).toBeDefined();
+      if (c.computeMode === ComputeMode.Formula) expect(parse(c.formula)).toBeDefined();
     }
   });
 
@@ -310,32 +310,32 @@ describe('数据中心 Data-Center E2E', () => {
 
 const WS_CELLS: CellDefinition[] = [
   // Inputs
-  { id: 'windCapacity', name: '风电装机', tableId: 'input', formula: '', type: CellType.Input, unit: 'MW', defaultValue: 300, isArray: false },
-  { id: 'storageCap', name: '储能容量', tableId: 'input', formula: '', type: CellType.Input, unit: 'MWh', defaultValue: 60, isArray: false },
-  { id: 'windCost', name: '风电造价', tableId: 'input', formula: '', type: CellType.Input, unit: '元/W', defaultValue: 6.0, isArray: false },
-  { id: 'storageCost', name: '储能造价', tableId: 'input', formula: '', type: CellType.Input, unit: '元/Wh', defaultValue: 1.5, isArray: false },
-  { id: 'windHours', name: '风电利用小时', tableId: 'input', formula: '', type: CellType.Input, unit: 'h', defaultValue: 2200, isArray: false },
-  { id: 'curtailRate', name: '弃风率', tableId: 'input', formula: '', type: CellType.Input, unit: '%', defaultValue: 0.05, isArray: false },
-  { id: 'windPrice', name: '风电上网价', tableId: 'input', formula: '', type: CellType.Input, unit: '元/kWh', defaultValue: 0.30, isArray: false },
-  { id: 'storageOam', name: '储能运维', tableId: 'input', formula: '', type: CellType.Input, unit: '元/kWh', defaultValue: 0.02, isArray: false },
+  { id: 'windCapacity', name: '风电装机', tableId: 'input', formula: '', computeMode: ComputeMode.Input, valueType: ValueType.Number, unit: 'MW', defaultValue: 300, isArray: false },
+  { id: 'storageCap', name: '储能容量', tableId: 'input', formula: '', computeMode: ComputeMode.Input, valueType: ValueType.Number, unit: 'MWh', defaultValue: 60, isArray: false },
+  { id: 'windCost', name: '风电造价', tableId: 'input', formula: '', computeMode: ComputeMode.Input, valueType: ValueType.Number, unit: '元/W', defaultValue: 6.0, isArray: false },
+  { id: 'storageCost', name: '储能造价', tableId: 'input', formula: '', computeMode: ComputeMode.Input, valueType: ValueType.Number, unit: '元/Wh', defaultValue: 1.5, isArray: false },
+  { id: 'windHours', name: '风电利用小时', tableId: 'input', formula: '', computeMode: ComputeMode.Input, valueType: ValueType.Number, unit: 'h', defaultValue: 2200, isArray: false },
+  { id: 'curtailRate', name: '弃风率', tableId: 'input', formula: '', computeMode: ComputeMode.Input, valueType: ValueType.Number, unit: '%', defaultValue: 0.05, isArray: false },
+  { id: 'windPrice', name: '风电上网价', tableId: 'input', formula: '', computeMode: ComputeMode.Input, valueType: ValueType.Number, unit: '元/kWh', defaultValue: 0.30, isArray: false },
+  { id: 'storageOam', name: '储能运维', tableId: 'input', formula: '', computeMode: ComputeMode.Input, valueType: ValueType.Number, unit: '元/kWh', defaultValue: 0.02, isArray: false },
 
   // Invest
-  { id: 'windInvest', name: '风电投资', tableId: 'invest', formula: '=input.风电装机 * input.风电造价', type: CellType.Formula, unit: '万元', isArray: false },
-  { id: 'stoInvest', name: '储能投资', tableId: 'invest', formula: '=input.储能容量 * input.储能造价', type: CellType.Formula, unit: '万元', isArray: false },
-  { id: 'totalInvest', name: '总投资', tableId: 'invest', formula: '=invest.风电投资 + invest.储能投资', type: CellType.Formula, unit: '万元', isArray: false },
+  { id: 'windInvest', name: '风电投资', tableId: 'invest', formula: '=input.风电装机 * input.风电造价', computeMode: ComputeMode.Formula, valueType: ValueType.Number, unit: '万元', isArray: false },
+  { id: 'stoInvest', name: '储能投资', tableId: 'invest', formula: '=input.储能容量 * input.储能造价', computeMode: ComputeMode.Formula, valueType: ValueType.Number, unit: '万元', isArray: false },
+  { id: 'totalInvest', name: '总投资', tableId: 'invest', formula: '=invest.风电投资 + invest.储能投资', computeMode: ComputeMode.Formula, valueType: ValueType.Number, unit: '万元', isArray: false },
 
   // Operation
-  { id: 'grossGen', name: '毛发电量', tableId: 'op', formula: '=input.风电装机 * input.风电利用小时', type: CellType.Formula, unit: '万kWh', isArray: false },
-  { id: 'netGen', name: '净发电量', tableId: 'op', formula: '=op.毛发电量 * (1-input.弃风率)', type: CellType.Formula, unit: '万kWh', isArray: false },
-  { id: 'revenue', name: '年收入', tableId: 'op', formula: '=op.净发电量 * input.风电上网价', type: CellType.Formula, unit: '万元', isArray: false },
-  { id: 'storageCostYear', name: '储能年运维', tableId: 'op', formula: '=input.储能容量 * input.储能运维 * 1000', type: CellType.Formula, unit: '万元', isArray: false },
-  { id: 'netRevenue', name: '净收入', tableId: 'op', formula: '=op.年收入 - op.储能年运维', type: CellType.Formula, unit: '万元', isArray: false },
+  { id: 'grossGen', name: '毛发电量', tableId: 'op', formula: '=input.风电装机 * input.风电利用小时', computeMode: ComputeMode.Formula, valueType: ValueType.Number, unit: '万kWh', isArray: false },
+  { id: 'netGen', name: '净发电量', tableId: 'op', formula: '=op.毛发电量 * (1-input.弃风率)', computeMode: ComputeMode.Formula, valueType: ValueType.Number, unit: '万kWh', isArray: false },
+  { id: 'revenue', name: '年收入', tableId: 'op', formula: '=op.净发电量 * input.风电上网价', computeMode: ComputeMode.Formula, valueType: ValueType.Number, unit: '万元', isArray: false },
+  { id: 'storageCostYear', name: '储能年运维', tableId: 'op', formula: '=input.储能容量 * input.储能运维 * 1000', computeMode: ComputeMode.Formula, valueType: ValueType.Number, unit: '万元', isArray: false },
+  { id: 'netRevenue', name: '净收入', tableId: 'op', formula: '=op.年收入 - op.储能年运维', computeMode: ComputeMode.Formula, valueType: ValueType.Number, unit: '万元', isArray: false },
 ];
 
 describe('风储 Wind-Storage E2E', () => {
   it('parses all cells', () => {
     for (const c of WS_CELLS) {
-      if (c.type === CellType.Formula) expect(parse(c.formula)).toBeDefined();
+      if (c.computeMode === ComputeMode.Formula) expect(parse(c.formula)).toBeDefined();
     }
   });
 

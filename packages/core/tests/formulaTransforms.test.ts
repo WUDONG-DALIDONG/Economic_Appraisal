@@ -13,7 +13,7 @@ function makeCells(): CellDefinition[] {
     { id: 'c1', code: '1', name: '施工进度安排', parentId: null, sortOrder: 0, tableId: 't1', formula: '', type: 'Input', isArray: true, scope: 'both' },
     // Dynamic investment group
     { id: 'c2', code: '2', name: '动态总投资', parentId: null, sortOrder: 1, tableId: 't1', formula: '', type: 'Input', isArray: true, scope: 'both' },
-    { id: 'c21', code: '2.1', name: '静态总投资', parentId: 'c2', sortOrder: 2, tableId: 't1', formula: '=参数.项目静态总投资*资金筹措表.1', type: 'Formula', isArray: true, scope: 'both' },
+    { id: 'c21', code: '2.1', name: '静态总投资', parentId: 'c2', sortOrder: 2, tableId: 't1', formula: '=全局参数.项目静态总投资*资金筹措表.1', type: 'Formula', isArray: true, scope: 'both' },
     { id: 'c22', code: '2.2', name: '建设期利息', parentId: 'c2', sortOrder: 3, tableId: 't1', formula: '=资金筹措表.3.1.2', type: 'Formula', isArray: true, scope: 'both' },
     // Source group
     { id: 'c3', code: '3', name: '资金来源', parentId: null, sortOrder: 4, tableId: 't1', formula: '', type: 'Input', isArray: true, scope: 'both' },
@@ -45,8 +45,8 @@ describe('formulaCodeToDisplay', () => {
   });
 
   it('leaves param refs unchanged', () => {
-    expect(formulaCodeToDisplay('=参数.项目静态总投资 * 资金筹措表.1', model))
-      .toBe('=参数.项目静态总投资 * 资金筹措表.施工进度安排');
+    expect(formulaCodeToDisplay('=全局参数.项目静态总投资 * 资金筹措表.1', model))
+      .toBe('=全局参数.项目静态总投资 * 资金筹措表.施工进度安排');
   });
 
   it('handles formula without leading =', () => {
@@ -67,13 +67,13 @@ describe('formulaDisplayToCode', () => {
   });
 
   it('converts full path with params mixed', () => {
-    expect(formulaDisplayToCode('=资金筹措表.资金来源.资本金.用于建设期利息 + 参数.项目静态总投资', model))
-      .toBe('=资金筹措表.3.1.2 + 参数.项目静态总投资');
+    expect(formulaDisplayToCode('=资金筹措表.资金来源.资本金.用于建设期利息 + 全局参数.项目静态总投资', model))
+      .toBe('=资金筹措表.3.1.2 + 全局参数.项目静态总投资');
   });
 
   it('preserves existing code refs as-is', () => {
-    expect(formulaDisplayToCode('=资金筹措表.2.1 + 参数.项目静态总投资', model))
-      .toBe('=资金筹措表.2.1 + 参数.项目静态总投资');
+    expect(formulaDisplayToCode('=资金筹措表.2.1 + 全局参数.项目静态总投资', model))
+      .toBe('=资金筹措表.2.1 + 全局参数.项目静态总投资');
   });
 
   it('maps legacy bare name to first code for backward compat', () => {

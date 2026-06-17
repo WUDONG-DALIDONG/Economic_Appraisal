@@ -43,12 +43,14 @@ export function initSchema(db: Database.Database): void {
       sort_order INTEGER DEFAULT 0,
       formula TEXT NOT NULL,
       cell_type TEXT NOT NULL,
+      value_type TEXT NOT NULL DEFAULT 'number',
       unit TEXT,
       description TEXT,
       default_value TEXT,
       is_array INTEGER NOT NULL DEFAULT 0,
       scope TEXT DEFAULT 'both',
       precision INTEGER,
+      use_grouping INTEGER,
       FOREIGN KEY (table_id) REFERENCES tables(id) ON DELETE CASCADE,
       FOREIGN KEY (model_id) REFERENCES models(id) ON DELETE CASCADE
     );
@@ -61,6 +63,7 @@ export function initSchema(db: Database.Database): void {
       parent_id TEXT,
       sort_order INTEGER DEFAULT 0,
       param_type TEXT NOT NULL,
+      compute_mode TEXT NOT NULL DEFAULT 'Input',
       default_value TEXT NOT NULL,
       formula TEXT,
       min_value REAL,
@@ -69,6 +72,7 @@ export function initSchema(db: Database.Database): void {
       description TEXT,
       options_json TEXT,
       precision INTEGER,
+      use_grouping INTEGER,
       UNIQUE(model_id, name),
       FOREIGN KEY (model_id) REFERENCES models(id) ON DELETE CASCADE
     );

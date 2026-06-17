@@ -81,7 +81,13 @@ export async function registerExportRoute(fastify: FastifyInstance, db: Database
     }
     // Backup before update
     backupModel(id, existing.name, existing);
-    modelRepo.updateFull(body);
+    try {
+      modelRepo.updateFull(body);
+    } catch (e: any) {
+      console.error('[PUT /api/models/:id] updateFull error:', e.message);
+      reply.status(500);
+      return { error: e.message };
+    }
     return { id, status: 'updated' };
   });
 
@@ -106,8 +112,14 @@ export async function registerExportRoute(fastify: FastifyInstance, db: Database
       reply.status(404);
       return { error: 'Model not found' };
     }
-    const computeService = new ComputeService(db);
-    const result = computeService.compute(model);
-    return result;
+    try {
+      const computeService = new ComputeService(db);
+      const result = computeService.compute(model);
+      return result;
+    } catch (e: any) {
+      console.error('[POST /api/models/:id/compute] compute error:', e.message);
+      reply.status(500);
+      return { error: e.message };
+    }
   });
 }

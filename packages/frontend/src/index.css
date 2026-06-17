@@ -1,12 +1,26 @@
-/* Global styles for TableExcelView */
+html, body, #root {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
 
-/* Table scroll container */
+select {
+  background: var(--select-bg);
+  color: var(--text-primary);
+}
+
+input {
+  color: var(--text-primary);
+  background: var(--bg-primary);
+}
+
 .table-excel-view {
   overflow: auto;
   position: relative;
 }
 
-/* Column resize handle - active state */
 .col-resize-handle {
   position: absolute;
   right: 0;
@@ -20,53 +34,50 @@
 
 .col-resize-handle:hover,
 .col-resize-handle.dragging {
-  background: #1976d2;
+  background: var(--accent);
 }
 
-/* Construction period column highlight */
 .construction-col {
-  background-color: #f5f9ff;
+  background-color: var(--bg-construction);
 }
 
 .construction-col-header {
-  background-color: #e3f2fd;
+  background-color: var(--bg-construction-header);
 }
 
-/* Sticky columns base */
 .sticky-col {
   position: sticky;
-  background: #fff;
+  background: var(--bg-primary);
   z-index: 1;
 }
 
 .sticky-col-header {
   position: sticky;
-  background: #fafafa;
+  background: var(--bg-secondary);
   z-index: 3;
 }
 
-/* Inline edit input style */
 .cell-edit-input {
   width: 100%;
-  border: 1px solid #1976d2;
+  border: 1px solid var(--accent);
   padding: 2px 4px;
   font-size: 12px;
   text-align: right;
   outline: none;
   box-sizing: border-box;
+  background: var(--bg-primary);
+  color: var(--text-primary);
 }
 
-/* Prevent text selection during drag */
 .no-select {
   user-select: none;
 }
 
-/* Tab button hover */
 .tab-btn {
   transition: all 0.15s ease;
 }
 
 .tab-btn:hover {
-  color: #1976d2;
-  background: rgba(25, 118, 210, 0.04);
+  color: var(--accent);
+  background: var(--bg-primary-light);
 }
