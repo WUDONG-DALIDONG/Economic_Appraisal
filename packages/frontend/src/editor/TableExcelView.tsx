@@ -1,9 +1,10 @@
 import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
-import { ModelDefinition, CellDefinition, ComputeMode, ValueType, recomputeCodes, getCodeDepth, formulaIdToDisplay } from '@economic/core';
+import { ModelDefinition, CellDefinition, ComputeMode, ValueType, recomputeCodes, getCodeDepth, formulaIdToDisplay, normalizeFullwidth, duplicateNodes } from '@economic/core';
 import { generateTimelineColumns, TimelineColumn } from '../utils/timelineColumns.js';
 import { FormulaEditor } from '../components/FormulaEditor.js';
 import { FormulaEditModal } from '../components/FormulaEditModal.js';
 import { FloatingToolbar } from '../components/FloatingToolbar.js';
+import { ContextMenu } from '../components/ContextMenu.js';
 import { formatNumber } from '../utils/formatNumber.js';
 import { useTheme } from '../ThemeContext.js';
 
@@ -59,6 +60,9 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
   const [editingFormulaCellId, setEditingFormulaCellId] = useState<string | null>(null);
   const [showIdColumn, setShowIdColumn] = useState(false);
   const [floatingToolbar, setFloatingToolbar] = useState<{ cellId: string; x: number; y: number } | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [lastClickedId, setLastClickedId] = useState<string | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ cellId: string; x: number; y: number } | null>(null);
 
   const resultMap = useMemo(() => {
     const map = new Map<string, number | null>();
@@ -168,6 +172,9 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
           (c) => c.tableId === cell.tableId && c.parentId === cell.parentId && c.id !== cellId
         );
         if (siblings.some((c) => c.name === updates.name)) {
+          alert(`同父节点下已存在名为 "${updates.name}" 的指标`);
+          // 清空输入框，等待用户输入新名字
+          onCellsChange(cellsWithCodes.map((c) => (c.id === cellId ? { ...c, name: '' } : c)));
           return;
         }
       }
@@ -198,6 +205,16 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
         removeSet.has(c.parentId ?? '') ? { ...c, parentId: newParentId } : c
       );
     onCellsChange([...otherRows, ...updatedRows]);
+    const visibleIds = displayCells.map(c => c.id);
+    const idx = visibleIds.indexOf(cellId);
+    const nextId = idx < visibleIds.length - 1 ? visibleIds[idx + 1] : idx > 0 ? visibleIds[idx - 1] : null;
+    if (nextId && !removeSet.has(nextId)) {
+      setSelectedIds(new Set([nextId]));
+      setLastClickedId(nextId);
+    } else {
+      setSelectedIds(new Set());
+      setLastClickedId(null);
+    }
   };
 
   const moveUpCell = (cellId: string) => {
@@ -228,6 +245,8 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
 
     const updatedRows = updated.map((c, i) => ({ ...c, sortOrder: i }));
     onCellsChange([...otherRows, ...updatedRows]);
+    setSelectedIds(new Set([cellId]));
+    setLastClickedId(cellId);
   };
 
   const moveDownCell = (cellId: string) => {
@@ -258,6 +277,8 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
 
     const updatedRows = updated.map((c, i) => ({ ...c, sortOrder: i }));
     onCellsChange([...otherRows, ...updatedRows]);
+    setSelectedIds(new Set([cellId]));
+    setLastClickedId(cellId);
   };
 
   const insertCellAt = (cellId: string) => {
@@ -315,9 +336,36 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
     updatedRows.splice(insertIdx, 0, newCell);
 
     onCellsChange([...otherRows, ...updatedRows.map((c, i) => ({ ...c, sortOrder: i }))]);
+    setSelectedIds(new Set([newCell.id]));
+    setLastClickedId(newCell.id);
   };
 
+  const duplicateCell = (cellId: string) => {
+    let counter = 1;
+    const randHex = (len: number) => {
+      const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+      return Array.from({ length: len }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+    };
+    const newCells = duplicateNodes(cellsWithCodes, cellId, {
+      rootSuffix: '_副本',
+      generateId: () => `cell-${Date.now()}-${randHex(6)}-${counter++}`,
+    });
+    onCellsChange(newCells);
+    const rootClone = newCells.find((c) => c.name?.endsWith('_副本'));
+    if (rootClone) {
+      setSelectedIds(new Set([rootClone.id]));
+      setLastClickedId(rootClone.id);
+    }
+  };
 
+  const handleRowContextMenu = (e: React.MouseEvent, id: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setSelectedIds(new Set([id]));
+    setLastClickedId(id);
+    setFloatingToolbar(null);
+    setContextMenu({ cellId: id, x: e.clientX, y: e.clientY });
+  };
 
   const indentCell = (cellId: string) => {
     const tableRows = cellsWithCodes.filter((c) => c.tableId === activeTableId);
@@ -329,14 +377,21 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
     const target = tableRows[idx];
     const prev = tableRows[idx - 1];
 
-    if (target.parentId === prev.id) return;
+    let newParentId: string | null;
+    if (prev.parentId && prev.parentId !== target.parentId) {
+      newParentId = prev.parentId;
+    } else {
+      newParentId = prev.id;
+    }
+    if (target.parentId === newParentId) return;
     if (prev.code && target.code && prev.code.startsWith(target.code + '.')) return;
 
-    const newParentId = prev.id;
     const updatedRows = tableRows.map((c) =>
       c.id === cellId ? { ...c, parentId: newParentId } : c
     );
     onCellsChange([...otherRows, ...updatedRows.map((c, i) => ({ ...c, sortOrder: i }))]);
+    setSelectedIds(new Set([cellId]));
+    setLastClickedId(cellId);
   };
 
   const outdentCell = (cellId: string) => {
@@ -353,6 +408,8 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
       c.id === cellId ? { ...c, parentId: newParentId } : c
     );
     onCellsChange([...otherRows, ...updatedRows.map((c, i) => ({ ...c, sortOrder: i }))]);
+    setSelectedIds(new Set([cellId]));
+    setLastClickedId(cellId);
   };
 
   const buildFamilies = (): Map<string, { parentId: string | null; children: string[] }> => {
@@ -393,6 +450,75 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
       return next;
     });
   };
+
+  const handleRowClick = useCallback((e: React.MouseEvent, id: string) => {
+    if (e.ctrlKey || e.metaKey) {
+      setSelectedIds(prev => {
+        const next = new Set(prev);
+        next.has(id) ? next.delete(id) : next.add(id);
+        return next;
+      });
+    } else if (e.shiftKey && lastClickedId) {
+      const ids = displayCells.map(c => c.id);
+      const start = ids.indexOf(lastClickedId);
+      const end = ids.indexOf(id);
+      if (start >= 0 && end >= 0) {
+        const [lo, hi] = [Math.min(start, end), Math.max(start, end)];
+        setSelectedIds(new Set(ids.slice(lo, hi + 1)));
+      }
+    } else {
+      setSelectedIds(new Set([id]));
+    }
+    setLastClickedId(id);
+  }, [lastClickedId, displayCells]);
+
+  const scrollToRow = useCallback((id: string) => {
+    const el = tableRef.current?.querySelector(`[data-row-id="${id}"]`);
+    el?.scrollIntoView({ block: 'nearest' });
+  }, []);
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (!lastClickedId) return;
+    const ids = displayCells.map(c => c.id);
+    const idx = ids.indexOf(lastClickedId);
+    if (idx < 0) return;
+
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (idx > 0) {
+        const newId = ids[idx - 1];
+        if (e.ctrlKey || e.metaKey) {
+          setSelectedIds(prev => new Set([...prev, newId]));
+        } else {
+          setSelectedIds(new Set([newId]));
+        }
+        setLastClickedId(newId);
+        scrollToRow(newId);
+      }
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (idx < ids.length - 1) {
+        const newId = ids[idx + 1];
+        if (e.ctrlKey || e.metaKey) {
+          setSelectedIds(prev => new Set([...prev, newId]));
+        } else {
+          setSelectedIds(new Set([newId]));
+        }
+        setLastClickedId(newId);
+        scrollToRow(newId);
+      }
+    } else if (e.key === 'a' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      setSelectedIds(new Set(ids));
+    }
+  }, [lastClickedId, displayCells, scrollToRow]);
+
+  const handleContainerClick = useCallback((e: React.MouseEvent) => {
+    const target = e.target as HTMLElement;
+    if (!target.closest('tr[data-row-id]')) {
+      setSelectedIds(new Set());
+    }
+  }, []);
 
   const hasChildren = (cellId: string): boolean => {
     const tableRows = cellsWithCodes.filter((c) => c.tableId === activeTableId);
@@ -519,11 +645,11 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
     textAlign: 'left' as const,
   });
 
-  const fixedCellStyle = (left: number, _width: number): React.CSSProperties => ({
+  const fixedCellStyle = (left: number, _width: number, isSelected: boolean = false): React.CSSProperties => ({
     position: 'sticky',
     left,
     zIndex: 1,
-    background: theme.bgPrimary,
+    background: isSelected ? theme.rowSelectedBg : theme.bgPrimary,
     borderBottom: `1px solid ${theme.borderSecondary}`,
     borderRight: `1px solid ${theme.borderPrimary}`,
     padding: '4px 8px',
@@ -560,6 +686,9 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
 
       <div
         ref={tableRef}
+        onClick={handleContainerClick}
+        onKeyDown={handleKeyDown}
+        tabIndex={0}
         style={{
           flex: 1,
           overflow: 'auto',
@@ -642,9 +771,17 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
             </tr>
           </thead>
           <tbody>
-            {displayCells.map((cell) => (
-              <tr key={cell.id}>
-                <td style={fixedCellStyle(colLeft(si, 'code'), CODE_COL_WIDTH)}>
+            {displayCells.map((cell) => {
+              const isSelected = selectedIds.has(cell.id);
+              return (
+              <tr
+                key={cell.id}
+                data-row-id={cell.id}
+                onClick={(e) => handleRowClick(e, cell.id)}
+                onContextMenu={(e) => handleRowContextMenu(e, cell.id)}
+                style={isSelected ? { background: theme.rowSelectedBg } : undefined}
+              >
+                <td style={fixedCellStyle(colLeft(si, 'code'), CODE_COL_WIDTH, isSelected)}>
                   {hasChildren(cell.id) ? (
                     <span
                       onClick={() => toggleCollapse(cell.code!)}
@@ -660,7 +797,7 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
 
                 {si && (
                   <td style={{
-                    ...fixedCellStyle(colLeft(si, 'id'), ID_COL_WIDTH),
+                    ...fixedCellStyle(colLeft(si, 'id'), ID_COL_WIDTH, isSelected),
                     fontSize: 10,
                     color: theme.textTertiary,
                     fontFamily: 'monospace',
@@ -671,13 +808,19 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
 
                 <td
                   style={{
-                    ...fixedCellStyle(colLeft(si, 'name'), NAME_COL_WIDTH),
+                    ...fixedCellStyle(colLeft(si, 'name'), NAME_COL_WIDTH, isSelected),
                     paddingLeft: `${8 + (codeDepth(cell.code) - 1) * 16}px`,
                   }}
                 >
                   <input
                     value={cell.name}
-                    onChange={(e) => updateCell(cell.id, { name: e.target.value })}
+                    onChange={(e) => updateCell(cell.id, { name: normalizeFullwidth(e.target.value) })}
+                    onBlur={(e) => {
+                      const trimmed = normalizeFullwidth(e.target.value.trim());
+                      if (trimmed !== cell.name) {
+                        updateCell(cell.id, { name: trimmed });
+                      }
+                    }}
                     style={{
                       width: '100%',
                       border: 'none',
@@ -689,7 +832,7 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
                   />
                 </td>
 
-                <td style={{ ...fixedCellStyle(colLeft(si, 'action'), ACTION_COL_WIDTH), display: 'flex', gap: 4, justifyContent: 'center', alignItems: 'center' }}>
+                <td style={{ ...fixedCellStyle(colLeft(si, 'action'), ACTION_COL_WIDTH, isSelected), display: 'flex', gap: 4, justifyContent: 'center', alignItems: 'center' }}>
                   <button
                     onClick={() => indentCell(cell.id)}
                     title="缩进 (设为子级)"
@@ -726,7 +869,7 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
                     +
                   </button>
                   <button
-                    onClick={cell.computeMode === ComputeMode.Title ? undefined : (e) => setFloatingToolbar({ cellId: cell.id, x: e.clientX, y: e.clientY })}
+                    onClick={cell.computeMode === ComputeMode.Title ? undefined : (e) => { setFloatingToolbar({ cellId: cell.id, x: e.clientX, y: e.clientY }); setSelectedIds(new Set([cell.id])); setLastClickedId(cell.id); }}
                     title={`精度: ${cell.precision ?? 2} 位`}
                     disabled={cell.computeMode === ComputeMode.Title}
                     style={{ width: 24, height: 20, color: cell.computeMode === ComputeMode.Title ? theme.textTertiary : theme.textSecondary, background: 'none', border: 'none', cursor: cell.computeMode === ComputeMode.Title ? 'default' : 'pointer', fontSize: 10, fontFamily: 'monospace', padding: 0 }}
@@ -742,7 +885,7 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
                   </button>
                 </td>
 
-                <td style={fixedCellStyle(colLeft(si, 'type'), TYPE_COL_WIDTH)}>
+                <td style={fixedCellStyle(colLeft(si, 'type'), TYPE_COL_WIDTH, isSelected)}>
                   <select
                     value={cell.computeMode}
                     onChange={(e) => updateCell(cell.id, { computeMode: e.target.value as ComputeMode })}
@@ -756,10 +899,10 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
                   </select>
                 </td>
 
-                <td style={fixedCellStyle(colLeft(si, 'unit'), UNIT_COL_WIDTH)}>
+                <td style={fixedCellStyle(colLeft(si, 'unit'), UNIT_COL_WIDTH, isSelected)}>
                   <input
                     value={cell.unit || ''}
-                    onChange={(e) => updateCell(cell.id, { unit: e.target.value })}
+                    onChange={(e) => updateCell(cell.id, { unit: normalizeFullwidth(e.target.value) })}
                     readOnly={cell.computeMode === ComputeMode.Title}
                     style={{
                       width: '100%',
@@ -772,7 +915,7 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
                   />
                 </td>
 
-                <td style={fixedCellStyle(colLeft(si, 'formula'), FORMULA_COL_WIDTH)}>
+                <td style={fixedCellStyle(colLeft(si, 'formula'), FORMULA_COL_WIDTH, isSelected)}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
                     {cell.computeMode === ComputeMode.Formula ? (
                       <FormulaEditor
@@ -781,7 +924,7 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
                         model={model}
                         currentCellId={cell.id}
                         mode="compact"
-                        onFocus={() => setEditingFormulaCellId(cell.id)}
+                        onFocus={() => { setEditingFormulaCellId(cell.id); setSelectedIds(new Set([cell.id])); setLastClickedId(cell.id); }}
                       />
                     ) : (
                       <span style={{ color: theme.textPlaceholder }}>−</span>
@@ -789,23 +932,7 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
                   </div>
                 </td>
 
-                {editingFormulaCellId && (() => {
-                  const editingCell = model.cells.find(c => c.id === editingFormulaCellId);
-                  if (!editingCell) return null;
-                  return (
-                    <FormulaEditModal
-                      cellName={editingCell.name}
-                      cellCode={editingCell.code || ''}
-                      cellId={editingCell.id}
-                      initialFormula={editingCell.formula}
-                      model={model}
-                      onSave={(formula) => updateCell(editingCell.id, { formula })}
-                      onClose={() => setEditingFormulaCellId(null)}
-                    />
-                  );
-                })()}
-
-                <td style={fixedCellStyle(colLeft(si, 'scope'), SCOPE_COL_WIDTH)}>
+                <td style={fixedCellStyle(colLeft(si, 'scope'), SCOPE_COL_WIDTH, isSelected)}>
                   {cell.computeMode === ComputeMode.Formula ? (
                     <select
                       value={cell.scope ?? 'both'}
@@ -822,7 +949,7 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
                 </td>
 
                 <td style={{
-                  ...fixedCellStyle(colLeft(si, 'summary'), SUMMARY_COL_WIDTH),
+                  ...fixedCellStyle(colLeft(si, 'summary'), SUMMARY_COL_WIDTH, isSelected),
                   textAlign: 'right',
                   fontWeight: 600,
                   color: theme.accent,
@@ -844,7 +971,7 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
                     <td
                       key={col.index}
                       style={{
-                        background: col.period === 'construction' ? theme.bgConstruction : theme.bgPrimary,
+                        background: isSelected ? theme.rowSelectedBg : (col.period === 'construction' ? theme.bgConstruction : theme.bgPrimary),
                         borderBottom: `1px solid ${theme.borderSecondary}`,
                         borderRight: `1px solid ${theme.borderSecondary}`,
                         padding: '4px',
@@ -919,7 +1046,8 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
                   );
                 })}
               </tr>
-            ))}
+              );
+            })}
 
             {displayCells.length === 0 && (
               <tr>
@@ -956,6 +1084,35 @@ export const TableExcelView: React.FC<TableExcelViewProps> = ({
           />
         );
       })()}
+      {editingFormulaCellId && (() => {
+        const cell = model.cells.find((c) => c.id === editingFormulaCellId);
+        if (!cell) return null;
+        return (
+          <FormulaEditModal
+            cellName={cell.name}
+            cellCode={cell.code || ''}
+            cellId={cell.id}
+            initialFormula={cell.formula}
+            model={model}
+            onSave={(formula) => updateCell(cell.id, { formula })}
+            onClose={() => setEditingFormulaCellId(null)}
+          />
+        );
+      })()}
+      {contextMenu && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          items={[
+            {
+              label: '复制并插入到下方',
+              icon: '📋',
+              onClick: () => duplicateCell(contextMenu.cellId),
+            },
+          ]}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
     </div>
   );
 };

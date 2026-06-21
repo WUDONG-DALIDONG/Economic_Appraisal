@@ -9,21 +9,22 @@ import { migrateParameterHierarchy } from './migration/parameterHierarchy.js';
 import { migratePrecision } from './migration/addPrecision.js';
 import { migrateFormulaIds } from './migration/migrateFormulaIds.js';
 import { migrateComputeModeValueType } from './migration/computeModeValueType.js';
+import { removeParameterNameUnique } from './migration/removeParameterNameUnique.js';
 import { registerExportRoute } from './routes/export.js';
 import { seedData } from './seed.js';
 import { backupDb } from './backup.js';
 
 const PORT = Number(process.env.PORT || 3001);
 
-// Default to file DB in repo root so data persists across restarts
+// 默认使用仓库根目录的文件数据库，数据在重启间持久化
 const REPO_ROOT = dirname(fileURLToPath(import.meta.url));
-const DB_PATH = process.env.DB_PATH || resolve(REPO_ROOT, '../../../../data.db');
+const DB_PATH = process.env.DB_PATH || resolve(REPO_ROOT, '../../../data.db');
 
-// Path to built frontend static files (monorepo: repo-root/packages/frontend/dist)
+// 构建后的前端静态文件路径（monorepo: repo-root/packages/frontend/dist）
 const FRONTEND_DIST = resolve(fileURLToPath(import.meta.url), '../../../frontend/dist');
 
 export async function buildServer(dbPath = DB_PATH, shouldSeed = false) {
-  // Backup existing DB before any operations
+  // 在任何操作之前备份现有数据库
   backupDb(dbPath);
 
   const db = new Database(dbPath);
@@ -33,13 +34,14 @@ export async function buildServer(dbPath = DB_PATH, shouldSeed = false) {
   migratePrecision(db);
   migrateFormulaIds(db);
   migrateComputeModeValueType(db);
+  removeParameterNameUnique(db);
 
-  // If using :memory:, seed some demo data so the export works out of the box
+  // 若使用 :memory:，填充演示数据以便导出功能开箱即用
   if (shouldSeed && dbPath === ':memory:') {
     seedData(db);
   }
 
-  // Seed demo model on first run when file DB is empty
+  // 文件数据库首次运行时填充演示模型
   const { count } = db.prepare('SELECT COUNT(*) AS count FROM models').get() as { count: number };
   if (dbPath !== ':memory:' && count === 0) {
     seedData(db);
@@ -55,21 +57,21 @@ export async function buildServer(dbPath = DB_PATH, shouldSeed = false) {
 
   await registerExportRoute(app, db);
 
-  // Health check endpoint (keep in API namespace to avoid conflicts)
+  // 健康检查端点（保持在 API 命名空间以避免冲突）
   app.get('/api/health', async () => ({
     status: 'ok',
     service: 'economic-appraisal-backend',
   }));
 
-  // Serve built frontend static files for any non-API path
+  // 为所有非 API 路径提供构建后的前端静态文件
   app.get('/*', async (request, reply) => {
-    const url = (request.url as string).split('?')[0]; // strip query string
+    const url = (request.url as string).split('?')[0]; // 去除查询字符串
     if (url.startsWith('/api/')) {
       reply.status(404);
       return { error: 'Not Found' };
     }
 
-    // Resolve file path; fall back to index.html for SPA routing
+    // 解析文件路径；回退到 index.html 以支持 SPA 路由
     let filePath = join(FRONTEND_DIST, url === '/' ? 'index.html' : url);
     if (!existsSync(filePath)) {
       filePath = join(FRONTEND_DIST, 'index.html');
@@ -110,7 +112,7 @@ async function main() {
   }
 }
 
-// Only run server when this file is executed directly (not imported in tests)
+  // 仅当此文件被直接执行时运行服务器（不在测试中导入时）
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   main();
 }

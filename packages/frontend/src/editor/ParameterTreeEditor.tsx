@@ -1,9 +1,10 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useCallback, useEffect } from 'react';
 import type { ModelDefinition, ParameterDefinition } from '@economic/core';
-import { ValueType, ComputeMode, recomputeCodes, getCodeDepth } from '@economic/core';
+import { ValueType, ComputeMode, recomputeCodes, getCodeDepth, normalizeFullwidth, duplicateNodes } from '@economic/core';
 import { FormulaEditor } from '../components/FormulaEditor.js';
 import { FormulaEditModal } from '../components/FormulaEditModal.js';
 import { FloatingToolbar } from '../components/FloatingToolbar.js';
+import { ContextMenu } from '../components/ContextMenu.js';
 import { formatNumber } from '../utils/formatNumber.js';
 import { useTheme } from '../ThemeContext.js';
 
@@ -53,6 +54,11 @@ export const ParameterTreeEditor: React.FC<ParameterTreeEditorProps> = ({
   const [showIdColumn, setShowIdColumn] = useState(false);
   const [floatingToolbar, setFloatingToolbar] = useState<{ paramId: string; x: number; y: number } | null>(null);
   const [editingParamId, setEditingParamId] = useState<string | null>(null);
+  const [editingRawValue, setEditingRawValue] = useState<Record<string, string>>({});
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [lastClickedId, setLastClickedId] = useState<string | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ paramId: string; x: number; y: number } | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
 
   const paramValueMap = useMemo(() => {
     const m = new Map<string, unknown>();
@@ -140,6 +146,9 @@ export const ParameterTreeEditor: React.FC<ParameterTreeEditorProps> = ({
           (p) => p.parentId === param.parentId && p.id !== id
         );
         if (siblings.some((p) => p.name === updates.name)) {
+          alert(`同父节点下已存在名为 "${updates.name}" 的参数`);
+          // 清空输入框，等待用户输入新名字
+          onChange(paramsWithCodes.map((p) => (p.id === id ? { ...p, name: '' } : p)));
           return;
         }
       }
@@ -156,11 +165,21 @@ export const ParameterTreeEditor: React.FC<ParameterTreeEditorProps> = ({
     const removeSet = new Set([id, ...desc]);
     const target = paramsWithCodes.find((p) => p.id === id);
     const newParentId = target ? target.parentId : null;
+    const remaining = paramsWithCodes.filter((p) => !removeSet.has(p.id));
     onChange(
-      paramsWithCodes
-        .filter((p) => !removeSet.has(p.id))
+      remaining
         .map((p) => (removeSet.has(p.parentId ?? '') ? { ...p, parentId: newParentId } : p))
     );
+    const visibleIds = displayParams.map(p => p.id);
+    const idx = visibleIds.indexOf(id);
+    const nextId = idx < visibleIds.length - 1 ? visibleIds[idx + 1] : idx > 0 ? visibleIds[idx - 1] : null;
+    if (nextId && !removeSet.has(nextId)) {
+      setSelectedIds(new Set([nextId]));
+      setLastClickedId(nextId);
+    } else {
+      setSelectedIds(new Set());
+      setLastClickedId(null);
+    }
   };
 
   const indentParam = (id: string) => {
@@ -168,10 +187,18 @@ export const ParameterTreeEditor: React.FC<ParameterTreeEditorProps> = ({
     if (idx <= 0) return;
     const target = paramsWithCodes[idx];
     const prev = paramsWithCodes[idx - 1];
-    if (target.parentId === prev.id) return;
+    let newParentId: string | null;
+    if (prev.parentId && prev.parentId !== target.parentId) {
+      newParentId = prev.parentId;
+    } else {
+      newParentId = prev.id;
+    }
+    if (target.parentId === newParentId) return;
     if (prev.code && target.code && prev.code.startsWith(target.code + '.')) return;
-    const updated = paramsWithCodes.map((p) => (p.id === id ? { ...p, parentId: prev.id } : p));
+    const updated = paramsWithCodes.map((p) => (p.id === id ? { ...p, parentId: newParentId } : p));
     onChange(updated.map((p, i) => ({ ...p, sortOrder: i })));
+    setSelectedIds(new Set([id]));
+    setLastClickedId(id);
   };
 
   const outdentParam = (id: string) => {
@@ -182,6 +209,8 @@ export const ParameterTreeEditor: React.FC<ParameterTreeEditorProps> = ({
       p.id === id ? { ...p, parentId: parent?.parentId ?? null } : p
     );
     onChange(updated.map((p, i) => ({ ...p, sortOrder: i })));
+    setSelectedIds(new Set([id]));
+    setLastClickedId(id);
   };
 
   const insertParamAt = (id: string) => {
@@ -229,6 +258,39 @@ export const ParameterTreeEditor: React.FC<ParameterTreeEditorProps> = ({
     const updated = [...paramsWithCodes];
     updated.splice(insertIdx, 0, newParam);
     onChange(updated.map((p, i) => ({ ...p, sortOrder: i })));
+    setSelectedIds(new Set([newParam.id]));
+    setLastClickedId(newParam.id);
+  };
+
+  const duplicateParam = (id: string) => {
+    let counter = 1;
+    const randHex = (len: number) => {
+      const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+      return Array.from({ length: len }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+    };
+    const newParams = duplicateNodes(paramsWithCodes, id, {
+      rootSuffix: '_副本',
+      generateId: () => `p-${Date.now()}-${randHex(6)}-${counter++}`,
+    });
+    onChange(newParams);
+    // 找到新复制的根节点 ID（新生成的第一个节点）
+    const rootClone = newParams.find((p) => p.name?.endsWith('_副本'));
+    if (rootClone) {
+      const idx = newParams.findIndex((p) => p.id === rootClone.id);
+      if (idx >= 0) {
+        setSelectedIds(new Set([rootClone.id]));
+        setLastClickedId(rootClone.id);
+      }
+    }
+  };
+
+  const handleRowContextMenu = (e: React.MouseEvent, id: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setSelectedIds(new Set([id]));
+    setLastClickedId(id);
+    setFloatingToolbar(null); // 关闭现有浮动工具栏
+    setContextMenu({ paramId: id, x: e.clientX, y: e.clientY });
   };
 
   const moveUpParam = (id: string) => {
@@ -257,6 +319,8 @@ export const ParameterTreeEditor: React.FC<ParameterTreeEditorProps> = ({
 
     const result = updated.map((p, i) => ({ ...p, sortOrder: i }));
     onChange(result);
+    setSelectedIds(new Set([id]));
+    setLastClickedId(id);
   };
 
   const moveDownParam = (id: string) => {
@@ -285,6 +349,8 @@ export const ParameterTreeEditor: React.FC<ParameterTreeEditorProps> = ({
 
     const result = updated.map((p, i) => ({ ...p, sortOrder: i }));
     onChange(result);
+    setSelectedIds(new Set([id]));
+    setLastClickedId(id);
   };
 
   const toggleCollapse = (code: string) => {
@@ -295,6 +361,75 @@ export const ParameterTreeEditor: React.FC<ParameterTreeEditorProps> = ({
       return next;
     });
   };
+
+  const handleRowClick = useCallback((e: React.MouseEvent, id: string) => {
+    if (e.ctrlKey || e.metaKey) {
+      setSelectedIds(prev => {
+        const next = new Set(prev);
+        next.has(id) ? next.delete(id) : next.add(id);
+        return next;
+      });
+    } else if (e.shiftKey && lastClickedId) {
+      const ids = displayParams.map(p => p.id);
+      const start = ids.indexOf(lastClickedId);
+      const end = ids.indexOf(id);
+      if (start >= 0 && end >= 0) {
+        const [lo, hi] = [Math.min(start, end), Math.max(start, end)];
+        setSelectedIds(new Set(ids.slice(lo, hi + 1)));
+      }
+    } else {
+      setSelectedIds(new Set([id]));
+    }
+    setLastClickedId(id);
+  }, [lastClickedId, displayParams]);
+
+  const scrollToRow = useCallback((id: string) => {
+    const el = containerRef.current?.querySelector(`[data-row-id="${id}"]`);
+    el?.scrollIntoView({ block: 'nearest' });
+  }, []);
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (!lastClickedId) return;
+    const ids = displayParams.map(p => p.id);
+    const idx = ids.indexOf(lastClickedId);
+    if (idx < 0) return;
+
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (idx > 0) {
+        const newId = ids[idx - 1];
+        if (e.ctrlKey || e.metaKey) {
+          setSelectedIds(prev => new Set([...prev, newId]));
+        } else {
+          setSelectedIds(new Set([newId]));
+        }
+        setLastClickedId(newId);
+        scrollToRow(newId);
+      }
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (idx < ids.length - 1) {
+        const newId = ids[idx + 1];
+        if (e.ctrlKey || e.metaKey) {
+          setSelectedIds(prev => new Set([...prev, newId]));
+        } else {
+          setSelectedIds(new Set([newId]));
+        }
+        setLastClickedId(newId);
+        scrollToRow(newId);
+      }
+    } else if (e.key === 'a' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      setSelectedIds(new Set(ids));
+    }
+  }, [lastClickedId, displayParams, scrollToRow]);
+
+  const handleContainerClick = useCallback((e: React.MouseEvent) => {
+    const target = e.target as HTMLElement;
+    if (!target.closest('tr[data-row-id]')) {
+      setSelectedIds(new Set());
+    }
+  }, []);
 
   const handleNameBlur = (id: string) => {
     if (!renameRef.current || !onRename) return;
@@ -332,11 +467,11 @@ export const ParameterTreeEditor: React.FC<ParameterTreeEditorProps> = ({
     textAlign: 'left' as const,
   });
 
-  const fixedCellStyle = (left: number, _width: number): React.CSSProperties => ({
+  const fixedCellStyle = (left: number, _width: number, isSelected: boolean = false): React.CSSProperties => ({
     position: 'sticky',
     left,
     zIndex: 1,
-    background: theme.bgPrimary,
+    background: isSelected ? theme.rowSelectedBg : theme.bgPrimary,
     borderBottom: `1px solid ${theme.borderSecondary}`,
     borderRight: `1px solid ${theme.borderPrimary}`,
     padding: '4px 8px',
@@ -368,7 +503,13 @@ export const ParameterTreeEditor: React.FC<ParameterTreeEditorProps> = ({
         </div>
       </div>
 
-      <div style={{ border: `1px solid ${theme.borderPrimary}`, borderRadius: 4, overflow: 'auto', position: 'relative' }}>
+      <div
+        ref={containerRef}
+        style={{ border: `1px solid ${theme.borderPrimary}`, borderRadius: 4, overflow: 'auto', position: 'relative', maxHeight: '60vh' }}
+        onClick={handleContainerClick}
+        onKeyDown={handleKeyDown}
+        tabIndex={0}
+      >
         <table style={{ borderCollapse: 'collapse', tableLayout: 'fixed' }}>
           <thead>
             <tr>
@@ -408,9 +549,16 @@ export const ParameterTreeEditor: React.FC<ParameterTreeEditorProps> = ({
               const isLeaf = !hasChildren(param.id);
               const isParamCollapsed = param.code ? collapsedCodes.has(param.code) : false;
               const depth = codeDepth(param.code);
+              const isSelected = selectedIds.has(param.id);
               return (
-                <tr key={param.id}>
-                  <td style={fixedCellStyle(paramColLeft(si, 'code'), CODE_COL_WIDTH)}>
+              <tr
+                key={param.id}
+                data-row-id={param.id}
+                onClick={(e) => handleRowClick(e, param.id)}
+                onContextMenu={(e) => handleRowContextMenu(e, param.id)}
+                style={isSelected ? { background: theme.rowSelectedBg } : undefined}
+              >
+                  <td style={fixedCellStyle(paramColLeft(si, 'code'), CODE_COL_WIDTH, isSelected)}>
                     {hasChildren(param.id) ? (
                       <span
                         onClick={() => toggleCollapse(param.code!)}
@@ -426,7 +574,7 @@ export const ParameterTreeEditor: React.FC<ParameterTreeEditorProps> = ({
 
                   {si && (
                     <td style={{
-                      ...fixedCellStyle(paramColLeft(si, 'id'), ID_COL_WIDTH),
+                      ...fixedCellStyle(paramColLeft(si, 'id'), ID_COL_WIDTH, isSelected),
                       fontSize: 10,
                       color: theme.textTertiary,
                       fontFamily: 'monospace',
@@ -437,15 +585,21 @@ export const ParameterTreeEditor: React.FC<ParameterTreeEditorProps> = ({
 
                   <td
                     style={{
-                      ...fixedCellStyle(paramColLeft(si, 'name'), NAME_COL_WIDTH),
+                      ...fixedCellStyle(paramColLeft(si, 'name'), NAME_COL_WIDTH, isSelected),
                       paddingLeft: `${8 + (depth - 1) * 16}px`,
                     }}
                   >
                     <input
                       value={param.name}
-                      onChange={(e) => updateParam(param.id, { name: e.target.value })}
+                      onChange={(e) => updateParam(param.id, { name: normalizeFullwidth(e.target.value) })}
                       onFocus={() => { renameRef.current = { id: param.id, oldName: param.name }; }}
-                      onBlur={() => handleNameBlur(param.id)}
+                      onBlur={() => {
+                        const trimmed = param.name.trim();
+                        if (trimmed !== param.name) {
+                          updateParam(param.id, { name: trimmed });
+                        }
+                        handleNameBlur(param.id);
+                      }}
                       style={{
                         width: '100%',
                         border: 'none',
@@ -457,7 +611,7 @@ export const ParameterTreeEditor: React.FC<ParameterTreeEditorProps> = ({
                     />
                   </td>
 
-                  <td style={{ ...fixedCellStyle(paramColLeft(si, 'action'), ACTION_COL_WIDTH), display: 'flex', gap: 4, justifyContent: 'center', alignItems: 'center' }}>
+                  <td style={{ ...fixedCellStyle(paramColLeft(si, 'action'), ACTION_COL_WIDTH, isSelected), display: 'flex', gap: 4, justifyContent: 'center', alignItems: 'center' }}>
                     <button
                       onClick={() => indentParam(param.id)}
                       title="缩进 (设为子级)"
@@ -494,7 +648,7 @@ export const ParameterTreeEditor: React.FC<ParameterTreeEditorProps> = ({
                       +
                     </button>
                     <button
-                      onClick={param.computeMode === ComputeMode.Title ? undefined : (e) => setFloatingToolbar({ paramId: param.id, x: e.clientX, y: e.clientY })}
+                      onClick={param.computeMode === ComputeMode.Title ? undefined : (e) => { setFloatingToolbar({ paramId: param.id, x: e.clientX, y: e.clientY }); setSelectedIds(new Set([param.id])); setLastClickedId(param.id); }}
                       title={`精度: ${param.precision ?? 2} 位`}
                       disabled={param.computeMode === ComputeMode.Title}
                       style={{ width: 24, height: 20, color: param.computeMode === ComputeMode.Title ? theme.textTertiary : theme.textSecondary, background: 'none', border: 'none', cursor: param.computeMode === ComputeMode.Title ? 'default' : 'pointer', fontSize: 10, fontFamily: 'monospace', padding: 0 }}
@@ -510,7 +664,7 @@ export const ParameterTreeEditor: React.FC<ParameterTreeEditorProps> = ({
                     </button>
                   </td>
 
-                  <td style={fixedCellStyle(paramColLeft(si, 'computeMode'), COMPUTE_MODE_COL_WIDTH)}>
+                  <td style={fixedCellStyle(paramColLeft(si, 'computeMode'), COMPUTE_MODE_COL_WIDTH, isSelected)}>
                     <select
                       value={param.computeMode || ComputeMode.Input}
                       onChange={(e) => updateParam(param.id, { computeMode: e.target.value as ComputeMode })}
@@ -522,7 +676,7 @@ export const ParameterTreeEditor: React.FC<ParameterTreeEditorProps> = ({
                     </select>
                   </td>
 
-                  <td style={fixedCellStyle(paramColLeft(si, 'valueType'), TYPE_COL_WIDTH)}>
+                  <td style={fixedCellStyle(paramColLeft(si, 'valueType'), TYPE_COL_WIDTH, isSelected)}>
                     <select
                       value={param.valueType}
                       onChange={(e) => updateParam(param.id, { valueType: e.target.value as ValueType })}
@@ -535,10 +689,10 @@ export const ParameterTreeEditor: React.FC<ParameterTreeEditorProps> = ({
                     </select>
                   </td>
 
-                  <td style={fixedCellStyle(paramColLeft(si, 'unit'), UNIT_COL_WIDTH)}>
+                  <td style={fixedCellStyle(paramColLeft(si, 'unit'), UNIT_COL_WIDTH, isSelected)}>
                     <input
                       value={param.unit || ''}
-                      onChange={(e) => updateParam(param.id, { unit: e.target.value })}
+                      onChange={(e) => updateParam(param.id, { unit: normalizeFullwidth(e.target.value) })}
                       readOnly={param.computeMode === ComputeMode.Title}
                       style={{
                         width: '100%',
@@ -551,7 +705,7 @@ export const ParameterTreeEditor: React.FC<ParameterTreeEditorProps> = ({
                     />
                   </td>
 
-                  <td style={fixedCellStyle(paramColLeft(si, 'value'), VALUE_COL_WIDTH)}>
+                  <td style={fixedCellStyle(paramColLeft(si, 'value'), VALUE_COL_WIDTH, isSelected)}>
                     {param.computeMode === ComputeMode.Title ? (
                       <span />
                     ) : param.computeMode === ComputeMode.Formula ? (
@@ -574,20 +728,45 @@ export const ParameterTreeEditor: React.FC<ParameterTreeEditorProps> = ({
                         type="text"
                         value={
                           (() => {
+                            if ((param.valueType === ValueType.Number || param.valueType === ValueType.Percentage) && editingParamId === param.id) {
+                              return editingRawValue[param.id] ?? '';
+                            }
                             const computedVal = param.formula ? paramValueMap.get(param.id) : undefined;
                             const displayVal = computedVal !== undefined ? computedVal : param.defaultValue;
-                            return (param.valueType === ValueType.Number || param.valueType === ValueType.Percentage) && editingParamId !== param.id && typeof displayVal === 'number'
-                              ? formatNumber(displayVal, param.precision, param.valueType, param.useGrouping)
-                              : String(displayVal ?? '');
+                            if ((param.valueType === ValueType.Number || param.valueType === ValueType.Percentage) && typeof displayVal === 'number') {
+                              return formatNumber(displayVal, param.precision, param.valueType, param.useGrouping);
+                            }
+                            return String(displayVal ?? '');
                           })()
                         }
-                        onFocus={() => setEditingParamId(param.id)}
-                        onBlur={() => setEditingParamId(null)}
+                        onFocus={() => {
+                          setEditingParamId(param.id);
+                          if (param.valueType === ValueType.Number || param.valueType === ValueType.Percentage) {
+                            const computedVal = param.formula ? paramValueMap.get(param.id) : undefined;
+                            const displayVal = computedVal !== undefined ? computedVal : param.defaultValue;
+                            setEditingRawValue((prev) => ({
+                              ...prev,
+                              [param.id]: typeof displayVal === 'number' ? String(displayVal) : (displayVal ?? ''),
+                            }));
+                          }
+                        }}
+                        onBlur={() => {
+                          setEditingParamId(null);
+                          if ((param.valueType === ValueType.Number || param.valueType === ValueType.Percentage) && editingRawValue[param.id] !== undefined) {
+                            const cleaned = editingRawValue[param.id].replace(/,/g, '');
+                            const num = cleaned === '' ? 0 : Number(cleaned);
+                            if (!isNaN(num)) updateParam(param.id, { defaultValue: num });
+                            setEditingRawValue((prev) => {
+                              const next = { ...prev };
+                              delete next[param.id];
+                              return next;
+                            });
+                          }
+                        }}
                         onChange={(e) => {
                           const raw = e.target.value.replace(/,/g, '');
                           if (param.valueType === ValueType.Number || param.valueType === ValueType.Percentage) {
-                            const num = raw === '' ? 0 : Number(raw);
-                            if (!isNaN(num)) updateParam(param.id, { defaultValue: num });
+                            setEditingRawValue((prev) => ({ ...prev, [param.id]: raw }));
                           } else {
                             updateParam(param.id, { defaultValue: e.target.value });
                           }
@@ -597,7 +776,7 @@ export const ParameterTreeEditor: React.FC<ParameterTreeEditorProps> = ({
                     )}
                   </td>
 
-                  <td style={fixedCellStyle(paramColLeft(si, 'formula'), FORMULA_COL_WIDTH)}>
+                  <td style={fixedCellStyle(paramColLeft(si, 'formula'), FORMULA_COL_WIDTH, isSelected)}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
                       {param.computeMode === ComputeMode.Formula ? (
                         <FormulaEditor
@@ -607,26 +786,12 @@ export const ParameterTreeEditor: React.FC<ParameterTreeEditorProps> = ({
                           currentCellId={param.id}
                           mode="compact"
                           scope="parameters-only"
-                          onFocus={() => setEditingFormulaParamId(param.id)}
+                          onFocus={() => { setEditingFormulaParamId(param.id); setSelectedIds(new Set([param.id])); setLastClickedId(param.id); }}
                         />
                       ) : (
                         <span style={{ color: theme.textPlaceholder }}>−</span>
                       )}
                     </div>
-                    {editingFormulaParamId === param.id && (
-                      <FormulaEditModal
-                        title={`参数公式: ${param.name || ''}`}
-                        formula={param.formula || ''}
-                        onSave={(val) => {
-                          updateParam(param.id, { formula: val });
-                          setEditingFormulaParamId(null);
-                        }}
-                        onClose={() => setEditingFormulaParamId(null)}
-                        model={model}
-                        currentCellId={param.id}
-                        scope="parameters-only"
-                      />
-                    )}
                   </td>
                 </tr>
               );
@@ -666,7 +831,39 @@ export const ParameterTreeEditor: React.FC<ParameterTreeEditorProps> = ({
             onClose={() => setFloatingToolbar(null)}
           />
         );
+        })()}
+      {editingFormulaParamId && (() => {
+        const param = paramsWithCodes.find((p) => p.id === editingFormulaParamId);
+        if (!param) return null;
+        return (
+          <FormulaEditModal
+            title={`参数公式: ${param.name || ''}`}
+            formula={param.formula || ''}
+            onSave={(val) => {
+              updateParam(param.id, { formula: val });
+              setEditingFormulaParamId(null);
+            }}
+            onClose={() => setEditingFormulaParamId(null)}
+            model={model}
+            currentCellId={param.id}
+            scope="parameters-only"
+          />
+        );
       })()}
+      {contextMenu && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          items={[
+            {
+              label: '复制并插入到下方',
+              icon: '📋',
+              onClick: () => duplicateParam(contextMenu.paramId),
+            },
+          ]}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
     </section>
   );
 };

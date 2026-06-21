@@ -1,14 +1,14 @@
 import Database from 'better-sqlite3';
 
 /**
- * Initialise the SQLite schema for the economic appraisal system.
+ * 初始化经济评估系统的 SQLite 数据库模式。
  *
- * Tables:
- *  - models: top-level model definitions
- *  - tables: table definitions owned by a model
- *  - cells: cell definitions (formulas + metadata) owned by a table
- *  - parameters: model-level parameters with default values
- *  - results: computed cell results per time index
+ * 表：
+ *  - models：顶层模型定义
+ *  - tables：模型所属的表定义
+ *  - cells：表所属的单元格定义（公式 + 元数据）
+ *  - parameters：模型级参数（含默认值）
+ *  - results：按时间索引的计算结果
  */
 export function initSchema(db: Database.Database): void {
   db.exec(`
@@ -59,11 +59,7 @@ export function initSchema(db: Database.Database): void {
       id TEXT PRIMARY KEY,
       model_id TEXT NOT NULL,
       name TEXT NOT NULL,
-      code TEXT,
-      parent_id TEXT,
-      sort_order INTEGER DEFAULT 0,
       param_type TEXT NOT NULL,
-      compute_mode TEXT NOT NULL DEFAULT 'Input',
       default_value TEXT NOT NULL,
       formula TEXT,
       min_value REAL,
@@ -71,9 +67,12 @@ export function initSchema(db: Database.Database): void {
       unit TEXT,
       description TEXT,
       options_json TEXT,
+      code TEXT,
+      parent_id TEXT,
+      sort_order INTEGER DEFAULT 0,
       precision INTEGER,
+      compute_mode TEXT NOT NULL DEFAULT 'Input',
       use_grouping INTEGER,
-      UNIQUE(model_id, name),
       FOREIGN KEY (model_id) REFERENCES models(id) ON DELETE CASCADE
     );
 

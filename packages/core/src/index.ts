@@ -8,3 +8,5 @@ export * from './dag/engine';
 export * from './dag/dependencyExtractor';
 export * from './utils/coding';
 export * from './utils/formulaTransforms';
+export * from './utils/normalizeFullwidth';
+export * from './utils/duplicate';
