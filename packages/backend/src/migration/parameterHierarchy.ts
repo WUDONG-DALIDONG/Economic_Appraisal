@@ -1,10 +1,10 @@
 import Database from 'better-sqlite3';
 
 /**
- * Migrate parameters table to support hierarchical coding.
+ * 迁移参数表以支持层级编码。
  *
- * Adds missing columns: code, parent_id, sort_order.
- * Also assigns initial sequential codes to legacy flat parameters.
+ * 添加缺失的列：code、parent_id、sort_order。
+ * 同时为已有的扁平参数分配初始顺序编码。
  */
 export function migrateParameterHierarchy(db: Database.Database): void {
   const hasColumn = (col: string) => {
@@ -15,7 +15,7 @@ export function migrateParameterHierarchy(db: Database.Database): void {
       `).get(col);
   };
 
-  // Add missing columns
+  // 添加缺失的列
   if (!hasColumn('code')) {
     db.prepare('ALTER TABLE parameters ADD COLUMN code TEXT').run();
   }
@@ -26,8 +26,8 @@ export function migrateParameterHierarchy(db: Database.Database): void {
     db.prepare('ALTER TABLE parameters ADD COLUMN sort_order INTEGER DEFAULT 0').run();
   }
 
-  // Assign initial codes to parameters that have NULL code.
-  // Group by model_id, assign sequential numbers.
+  // 为 code 为 NULL 的参数分配初始编码。
+  // 按 model_id 分组，分配顺序编号。
   const rows = db.prepare(`
     SELECT id, model_id FROM parameters
     WHERE code IS NULL

@@ -3,22 +3,22 @@ import { ModelDefinition, TableDefinition, CellDefinition, CellValue, ParameterD
 import { ResultRow } from '../repository/ResultRepository';
 
 export interface ExportOptions {
-  /** Include formula column (true by default) */
+  /** 包含公式列（默认为 true） */
   includeFormulas?: boolean;
-  /** Include metadata sheet (true by default) */
+  /** 包含元数据工作表（默认为 true） */
   includeMetadata?: boolean;
 }
 
 /**
- * ExcelExporter generates .xlsx workbooks from computed model results.
+ * ExcelExporter 从计算结果生成 .xlsx 工作簿。
  *
- * Sheet layout (per table):
- *   Row 1: headers (指标, 类型, 单位, 公式, 建设期, 第1年, 第2年, ...)
- *   Row 2+: one row per cell with values per time period
+ * 工作表布局（每个表）：
+ *   第 1 行：表头（指标, 类型, 单位, 公式, 建设期, 第1年, 第2年, ...）
+ *   第 2 行起：每个单元格一行，包含各时段的值
  *
- * Additional sheets:
- *   - "参数输入": user-editable parameters
- *   - "说明": model metadata
+ * 附加工作表：
+ *   - "参数输入"：用户可编辑的参数
+ *   - "说明"：模型元数据
  */
 export class ExcelExporter {
   export(
@@ -32,7 +32,7 @@ export class ExcelExporter {
     const resultsByCell = this.groupByCell(results);
     const { maxTimeIndex } = this.findTimeRange(results);
 
-    // One sheet per table
+    // 每个表一个工作表
     for (const table of model.tables) {
       const tableCells = model.cells.filter(c => c.tableId === table.id);
       if (tableCells.length === 0) continue;
@@ -41,13 +41,13 @@ export class ExcelExporter {
       XLSX.utils.book_append_sheet(wb, ws, this.sanitizeSheetName(table.name));
     }
 
-    // Parameters sheet
+    // 参数工作表
     if (model.parameters.length > 0) {
       const ws = this.createParametersSheet(model.parameters);
       XLSX.utils.book_append_sheet(wb, ws, this.sanitizeSheetName('模型参数'));
     }
 
-    // Metadata sheet
+    // 元数据工作表
     if (opts.includeMetadata) {
       const ws = this.createMetadataSheet(model);
       XLSX.utils.book_append_sheet(wb, ws, this.sanitizeSheetName('模型说明'));
@@ -57,7 +57,7 @@ export class ExcelExporter {
   }
 
   // -------------------------------------------------------------------------
-  // Private helpers
+  // 私有辅助方法
   // -------------------------------------------------------------------------
 
   private groupByCell(results: ResultRow[]): Map<string, ResultRow[]> {
@@ -87,7 +87,7 @@ export class ExcelExporter {
   ): XLSX.WorkSheet {
     const data: (string | number | null)[][] = [];
 
-    // Header row
+    // 表头行
     const header = ['指标', '计算方式', '值类型', '单位'];
     if (options.includeFormulas) header.push('公式');
     for (let t = 0; t <= maxTimeIndex; t++) {
@@ -154,7 +154,7 @@ export class ExcelExporter {
   }
 
   private sanitizeSheetName(name: string): string {
-    // Excel sheet names: max 31 chars, no : \ / ? * [ ]
+    // Excel 工作表名称：最长 31 字符，不允许 : \ / ? * [ ]
     return name.slice(0, 31).replace(/[:\\/?*[\]]/g, '_');
   }
 }

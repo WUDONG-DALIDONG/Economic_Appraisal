@@ -33,12 +33,12 @@ export async function registerExportRoute(fastify: FastifyInstance, db: Database
     return buffer;
   });
 
-  // Plus a lightweight route to list models (helps frontend pick one)
+  // 轻量级路由：列出模型（帮助前端选择）
   fastify.get('/api/models', async () => {
     return modelRepo.findAll();
   });
 
-  // Get single model
+  // 获取单个模型
   fastify.get('/api/models/:id', async (request, reply) => {
     const { id } = request.params as { id: string };
     const model = modelRepo.findById(id);
@@ -49,7 +49,7 @@ export async function registerExportRoute(fastify: FastifyInstance, db: Database
     return model;
   });
 
-  // Create model
+  // 创建模型
   fastify.post('/api/models', async (request, reply) => {
     const body = request.body as ModelDefinition;
     if (!body.id || !body.name) {
@@ -66,7 +66,7 @@ export async function registerExportRoute(fastify: FastifyInstance, db: Database
     }
   });
 
-  // Update (full replace)
+  // 更新（全量替换）
   fastify.put('/api/models/:id', async (request, reply) => {
     const { id } = request.params as { id: string };
     const body = request.body as ModelDefinition;
@@ -79,7 +79,7 @@ export async function registerExportRoute(fastify: FastifyInstance, db: Database
       reply.status(404);
       return { error: 'Model not found' };
     }
-    // Backup before update
+    // 更新前备份
     backupModel(id, existing.name, existing);
     try {
       modelRepo.updateFull(body);
@@ -91,7 +91,7 @@ export async function registerExportRoute(fastify: FastifyInstance, db: Database
     return { id, status: 'updated' };
   });
 
-  // Delete
+  // 删除
   fastify.delete('/api/models/:id', async (request, reply) => {
     const { id } = request.params as { id: string };
     const existing = modelRepo.findById(id);
@@ -104,7 +104,7 @@ export async function registerExportRoute(fastify: FastifyInstance, db: Database
     return;
   });
 
-  // Compute
+  // 计算
   fastify.post('/api/models/:id/compute', async (request, reply) => {
     const { id } = request.params as { id: string };
     const model = modelRepo.findById(id);

@@ -16,8 +16,8 @@ function ensureDir(dir: string) {
 }
 
 /**
- * Backup the SQLite DB before server start.
- * Creates a timestamped snapshot in backups/db/.
+ * 服务器启动前备份 SQLite 数据库。
+ * 在 backups/db/ 中创建带时间戳的快照。
  */
 export function backupDb(dbPath: string): string | null {
   if (!existsSync(dbPath)) return null;
@@ -36,8 +36,8 @@ export function backupDb(dbPath: string): string | null {
 }
 
 /**
- * Backup a single model as JSON.
- * Called whenever a model is saved (PUT /api/models/:id).
+ * 将单个模型备份为 JSON。
+ * 在模型保存时调用（PUT /api/models/:id）。
  */
 export function backupModel(modelId: string, modelName: string, data: unknown): string | null {
   ensureDir(MODEL_BACKUP_DIR);
@@ -46,7 +46,7 @@ export function backupModel(modelId: string, modelName: string, data: unknown): 
   const backupPath = join(MODEL_BACKUP_DIR, `${safeName}-${modelId}-${timestamp}.json`);
   try {
     const content = JSON.stringify(data, null, 2);
-    // Write atomically via temp file
+    // 通过临时文件原子写入
     const tempPath = backupPath + '.tmp';
     writeFileSync(tempPath, content, 'utf8');
     renameSync(tempPath, backupPath);
@@ -69,6 +69,6 @@ function cleanupOldBackups(dir: string, max: number) {
       console.log(`[backup] Removed old backup: ${files[i].name}`);
     }
   } catch {
-    // ignore cleanup errors
+    // 忽略清理错误
   }
 }

@@ -1,3 +1,4 @@
+import { formulaDisplayToId } from '@economic/core/src/utils/formulaTransforms.js';
 import { parse } from '@economic/core/src/formula/parser';
 import { financialFunctions } from '@economic/core/src/formula/financialFunctions';
 import { ModelDefinition, ComputeMode, ParameterDefinition } from '@economic/core';
@@ -23,20 +24,19 @@ export interface ComputeResult {
 }
 
 /**
- * ComputeService orchestrates full-model computation.
+ * ComputeService 编排全模型计算。
  *
- * Pipeline:
- *   1. Evaluate derived parameters (topological sort of parameter DAG, only
- *      parameter→parameter references allowed)
- *   2. For each formula cell, parse → compile → run in VM2 sandbox
- *   3. Save result per time index into results table
+ * 计算管线：
+ *   1. 计算派生参数（参数 DAG 拓扑排序，仅允许参数→参数引用）
+ *   2. 对每个公式单元格，解析 → 编译 → 在 VM2 沙箱中运行
+ *   3. 按时间索引将结果保存到 results 表
  *
- * The VM context exposes:
- *   - ctx.t                : current time index
- *   - ctx.getCell()        : table+field lookup (for Excel-style refs)
- *   - ctx.getCellArray()   : retrieve all time-series values for a cell
- *   - ctx.functions        : financial helper functions (NPV, IRR, etc.)
- *   - ctx.<cellId>         : direct value access for bare identifier refs
+ * VM 上下文暴露：
+ *   - ctx.t                : 当前时间索引
+ *   - ctx.getCell()        : 表+字段查找（用于 Excel 风格引用）
+ *   - ctx.getCellArray()   : 获取单元格的全时间序列值
+ *   - ctx.functions        : 财务辅助函数（NPV、IRR 等）
+ *   - ctx.<cellId>         : 裸标识符引用的直接值访问
  *   - ctx.参数             : { [paramName]: paramValue } 命名空间
  */
 export class ComputeService {
@@ -54,7 +54,7 @@ export class ComputeService {
     const errors: ComputeResult['errors'] = [];
     const results: ComputeResult['results'] = [];
 
-    // Clear stale results to ensure clean computation
+    // 清除过期结果以确保干净的计算
     resultRepo.deleteByModel(model.id);
 
     const cellMap = new Map(model.cells.map(c => [c.id, c]));
@@ -65,10 +65,40 @@ export class ComputeService {
     const constructionCols = Math.ceil(constructionYears);
     const maxTime = Math.max(0, constructionCols + operationYears - 1);
 
-    // Step 1: evaluate derived parameters (param -> param only)
+    // 兜底：将显示格式的公式引用转换为 @{id} 格式，避免解析错误
+    for (const c of model.cells) {
+      if (c.formula) {
+        try {
+          c.formula = formulaDisplayToId(c.formula, model);
+        } catch (err: any) {
+          errors.push({ cellId: c.id, timeIndex: -1, error: `公式引用转换失败: ${err.message}` });
+          console.warn('[ComputeService] formulaDisplayToId failed for cell', c.id, c.name, ':', err.message, '| formula=', c.formula);
+          // 既然无法转换该 cell 的公式，直接清空跳过，避免后续 27 次重复报错
+          c.formula = '';
+        }
+      }
+    }
+    for (const p of model.parameters) {
+      if (p.formula) {
+        try {
+          p.formula = formulaDisplayToId(p.formula, model);
+        } catch (err: any) {
+          errors.push({ cellId: p.id, timeIndex: -1, error: `参数公式引用转换失败: ${err.message}` });
+          console.warn('[ComputeService] formulaDisplayToId failed for param', p.id, p.name, ':', err.message, '| formula=', p.formula);
+          p.formula = '';
+        }
+      }
+    }
+
+    // 步骤 1：计算派生参数（仅 param -> param）
     const paramValues = this.evaluateDerivedParameters(model.parameters);
 
-    // Step 2: build cell DAG and topologically sort
+    // 内存结果缓存：替代 DB 查询
+    const memResults = new Map<string, Map<number, number | null>>();
+    // parse + compile 缓存：每个 cell 的 formula 只编译一次
+    const formulaCache = new Map<string, string>();
+
+    // 步骤 2：构建单元格 DAG 并拓扑排序
     const dag = buildDAG(
       model.cells,
       (table, field) => {
@@ -78,36 +108,45 @@ export class ComputeService {
       collectDependencies
     );
 
-    // Remove self-references (e.g. [t-1] cumulative formulas) to avoid false cycles
+    // 移除自引用（如 [t-1] 累积公式）以避免假循环
     for (const [id, node] of dag.nodes) {
       node.dependencies = node.dependencies.filter(depId => depId !== id);
       node.dependents = node.dependents.filter(depId => depId !== id);
     }
 
-    // Topological sort after removing self-loops
+    // 移除自环后进行拓扑排序
     const orderedCellIds = this.topologicalSort(dag.nodes);
 
     if (orderedCellIds !== null) {
-      // No cycle — normal computation path
-      this.computeCellsInOrder(orderedCellIds, cellMap, paramValues, paramMap, resultRepo, model, tableNameToId, constructionCols, maxTime, errors, results);
+      // 无循环 — 正常计算路径
+      this.computeCellsInOrder(orderedCellIds, cellMap, paramValues, paramMap, resultRepo, model, tableNameToId, constructionCols, maxTime, errors, results, memResults, formulaCache);
     } else {
-      // Cycle detected — iterative convergence path
+      // 检测到循环 — 迭代收敛路径
       const nonCycleIds = this.getNonCycleIds(dag.nodes);
       const cycleIds = this.getCycleIds(dag.nodes);
 
-      // Step 3a: compute non-cycle cells in topological order first
+      // 步骤 3a：先按拓扑顺序计算非循环单元格
       if (nonCycleIds.length > 0) {
         const nonCycleOrdered = this.topologicalSortFiltered(dag.nodes, new Set(nonCycleIds));
         if (nonCycleOrdered) {
-          this.computeCellsInOrder(nonCycleOrdered, cellMap, paramValues, paramMap, resultRepo, model, tableNameToId, constructionCols, maxTime, errors, results);
+          this.computeCellsInOrder(nonCycleOrdered, cellMap, paramValues, paramMap, resultRepo, model, tableNameToId, constructionCols, maxTime, errors, results, memResults, formulaCache);
         }
       }
 
-      // Step 3b: iterative computation for cycle cells
+      // 步骤 3b：循环单元格的迭代计算
       this.computeCycleIteratively(
         cycleIds, dag.nodes, cellMap, paramValues, paramMap, resultRepo,
-        model, tableNameToId, constructionCols, maxTime, errors, results
+        model, tableNameToId, constructionCols, maxTime, errors, results, memResults, formulaCache
       );
+    }
+
+    // 将内存中的所有结果批量写入数据库
+    const batchEntries: Array<{ cellId: string; timeIndex: number; value: number | null }> = [];
+    for (const { cellId, timeIndex, value } of results) {
+      batchEntries.push({ cellId, timeIndex, value });
+    }
+    if (batchEntries.length > 0) {
+      resultRepo.saveAllBatch(model.id, batchEntries);
     }
 
     return {
@@ -121,8 +160,8 @@ export class ComputeService {
   }
 
   /**
-   * Compute a list of cell IDs in the given order (topological).
-   * Shared by normal path and iterative path.
+   * 按给定顺序（拓扑序）计算单元格 ID 列表。
+   * 正常路径和迭代路径共用。
    */
   private computeCellsInOrder(
     orderedCellIds: string[],
@@ -135,7 +174,9 @@ export class ComputeService {
     constructionCols: number,
     maxTime: number,
     errors: ComputeResult['errors'],
-    results: ComputeResult['results']
+    results: ComputeResult['results'],
+    memResults: Map<string, Map<number, number | null>>,
+    formulaCache: Map<string, string>
   ): void {
     const timeRange = Array.from({ length: maxTime + 1 }, (_, i) => i);
 
@@ -145,30 +186,38 @@ export class ComputeService {
 
       for (const t of timeRange) {
         if (!this.isInScope(cell.scope, t, constructionCols)) {
-          resultRepo.save(cell.id, model.id, t, 0);
+          if (!memResults.has(cell.id)) memResults.set(cell.id, new Map());
+          memResults.get(cell.id)!.set(t, 0);
           results.push({ cellId: cell.id, timeIndex: t, value: 0 });
           continue;
         }
 
         try {
-          const ast = parse(cell.formula);
-          const jsCode = this.compiler.compile(ast);
+          let jsCode = formulaCache.get(cell.formula);
+          if (!jsCode) {
+            const ast = parse(cell.formula);
+            jsCode = this.compiler.compile(ast);
+            formulaCache.set(cell.formula, jsCode);
+          }
           const ctx = this.buildContext(
-            t, cellMap, paramValues, paramMap, resultRepo, cell.id, model.id, tableNameToId, constructionCols, model.parameters
+            t, cellMap, paramValues, paramMap, memResults, model.id, tableNameToId, constructionCols, model.parameters, maxTime
           );
-          const result = this.vm.execute(jsCode, { ctx });
+          const result = this.vm.executeShared(jsCode, { ctx });
           if (result === '#REF!') {
             errors.push({ cellId: cell.id, timeIndex: t, error: '#REF! - 引用了已删除的指标' });
-            resultRepo.save(cell.id, model.id, t, null);
+            if (!memResults.has(cell.id)) memResults.set(cell.id, new Map());
+            memResults.get(cell.id)!.set(t, null);
             results.push({ cellId: cell.id, timeIndex: t, value: null });
           } else {
             const numericResult = typeof result === 'number' ? result : null;
-            resultRepo.save(cell.id, model.id, t, numericResult);
+            if (!memResults.has(cell.id)) memResults.set(cell.id, new Map());
+            memResults.get(cell.id)!.set(t, numericResult);
             results.push({ cellId: cell.id, timeIndex: t, value: numericResult });
           }
         } catch (e: any) {
           errors.push({ cellId: cell.id, timeIndex: t, error: e.message });
-          resultRepo.save(cell.id, model.id, t, null);
+          if (!memResults.has(cell.id)) memResults.set(cell.id, new Map());
+          memResults.get(cell.id)!.set(t, null);
           results.push({ cellId: cell.id, timeIndex: t, value: null });
         }
       }
@@ -176,13 +225,13 @@ export class ComputeService {
   }
 
   /**
-   * Iterative computation for cells involved in dependency cycles.
+   * 依赖循环中单元格的迭代计算。
    * 
-   * Algorithm:
-   * 1. Seed cycle cells with initial values (defaultValue or 0)
-   * 2. Repeatedly compute cycle cells in dependency order
-   * 3. After each full pass, check if results have converged
-   * 4. Stop when max difference < threshold, or max iterations reached
+   * 算法：
+   * 1. 用初始值（defaultValue 或 0）初始化循环单元格
+   * 2. 按依赖顺序重复计算循环单元格
+   * 3. 每轮完整遍历后，检查结果是否已收敛
+   * 4. 当最大差值 < 阈值，或达到最大迭代次数时停止
    */
   private computeCycleIteratively(
     cycleIds: string[],
@@ -196,27 +245,29 @@ export class ComputeService {
     constructionCols: number,
     maxTime: number,
     errors: ComputeResult['errors'],
-    results: ComputeResult['results']
+    results: ComputeResult['results'],
+    memResults: Map<string, Map<number, number | null>>,
+    formulaCache: Map<string, string>
   ): void {
     const timeRange = Array.from({ length: maxTime + 1 }, (_, i) => i);
     const cycleSet = new Set(cycleIds);
 
-    // Determine computation order within cycle: sort by dependency depth
-    // (cells with fewer in-cycle deps first)
+    // 确定循环内的计算顺序：按依赖深度排序（循环内依赖更少的单元格优先）
     const cycleOrdered = this.sortCycleCells(cycleIds, dagNodes, cycleSet);
 
-    // Seed initial values for cycle cells
+    // 用初始值初始化循环单元格
     for (const cellId of cycleIds) {
       const cell = cellMap.get(cellId);
       if (!cell) continue;
 
       for (const t of timeRange) {
         if (!this.isInScope(cell.scope, t, constructionCols)) {
-          resultRepo.save(cell.id, model.id, t, 0);
+          if (!memResults.has(cell.id)) memResults.set(cell.id, new Map());
+          memResults.get(cell.id)!.set(t, 0);
           continue;
         }
 
-        // Use defaultValue as seed, or 0 if unavailable
+        // 使用 defaultValue 作为种子值，若无则用 0
         const dv = cell.defaultValue ?? 0;
         let seedValue = 0;
         if (Array.isArray(dv) && t < dv.length) {
@@ -225,11 +276,12 @@ export class ComputeService {
           seedValue = dv;
         }
 
-        resultRepo.save(cell.id, model.id, t, seedValue);
+        if (!memResults.has(cell.id)) memResults.set(cell.id, new Map());
+        memResults.get(cell.id)!.set(t, seedValue);
       }
     }
 
-    // Iterative convergence loop
+    // 迭代收敛循环
     let iteration = 0;
     let converged = false;
 
@@ -245,53 +297,59 @@ export class ComputeService {
           if (!this.isInScope(cell.scope, t, constructionCols)) continue;
 
           try {
-            const ast = parse(cell.formula);
-            const jsCode = this.compiler.compile(ast);
+            let jsCode = formulaCache.get(cell.formula);
+            if (!jsCode) {
+              const ast = parse(cell.formula);
+              jsCode = this.compiler.compile(ast);
+              formulaCache.set(cell.formula, jsCode);
+            }
             const ctx = this.buildContext(
-              t, cellMap, paramValues, paramMap, resultRepo, cell.id, model.id, tableNameToId, constructionCols, model.parameters
+              t, cellMap, paramValues, paramMap, memResults, model.id, tableNameToId, constructionCols, model.parameters, maxTime
             );
-            const result = this.vm.execute(jsCode, { ctx });
+            const result = this.vm.executeShared(jsCode, { ctx });
 
             if (result === '#REF!') {
               errors.push({ cellId: cell.id, timeIndex: t, error: '#REF! - 引用了已删除的指标' });
-              resultRepo.save(cell.id, model.id, t, null);
+              if (!memResults.has(cell.id)) memResults.set(cell.id, new Map());
+              memResults.get(cell.id)!.set(t, null);
               continue;
             }
 
             const numericResult = typeof result === 'number' ? result : null;
 
-            // Check convergence: compare with previous value
-            const prevResults = resultRepo.findByCell(cell.id);
-            const prev = prevResults.find(r => r.timeIndex === t && r.modelId === model.id);
-            const prevValue = prev?.value ?? 0;
+            // 检查收敛性：与前一次值比较
+            const cellResults = memResults.get(cell.id);
+            const prevValue = cellResults?.get(t) ?? 0;
             const newValue = numericResult ?? 0;
 
             if (Math.abs(newValue - prevValue) > ComputeService.CONVERGENCE_THRESHOLD) {
               converged = false;
             }
 
-            resultRepo.save(cell.id, model.id, t, numericResult);
+            if (!memResults.has(cell.id)) memResults.set(cell.id, new Map());
+            memResults.get(cell.id)!.set(t, numericResult);
           } catch (e: any) {
             errors.push({ cellId: cell.id, timeIndex: t, error: e.message });
-            resultRepo.save(cell.id, model.id, t, null);
+            if (!memResults.has(cell.id)) memResults.set(cell.id, new Map());
+            memResults.get(cell.id)!.set(t, null);
           }
         }
       }
     }
 
-    // Collect final results for cycle cells
+    // 收集循环单元格的最终结果
     for (const cellId of cycleIds) {
       const cell = cellMap.get(cellId);
       if (!cell || cell.computeMode !== ComputeMode.Formula || !cell.formula.trim()) continue;
 
       for (const t of timeRange) {
-        const stored = resultRepo.findByCell(cell.id);
-        const found = stored.find(r => r.timeIndex === t && r.modelId === model.id);
-        results.push({ cellId: cell.id, timeIndex: t, value: found?.value ?? null });
+        const cellResults = memResults.get(cell.id);
+        const found = cellResults?.get(t);
+        results.push({ cellId: cell.id, timeIndex: t, value: found !== undefined ? found : null });
       }
     }
 
-    // Add convergence warning if not fully converged
+    // 若未完全收敛则添加收敛警告
     if (!converged) {
       errors.push({
         cellId: cycleIds[0],
@@ -302,7 +360,7 @@ export class ComputeService {
   }
 
   /**
-   * Get cell IDs that are NOT part of any dependency cycle.
+   * 获取不属于任何依赖循环的单元格 ID。
    */
   private getNonCycleIds(nodes: Map<string, { cellId: string; dependencies: string[]; dependents: string[] }>): string[] {
     const inDegree = new Map<string, number>();
@@ -333,7 +391,7 @@ export class ComputeService {
   }
 
   /**
-   * Get cell IDs that ARE part of a dependency cycle.
+   * 获取属于依赖循环的单元格 ID。
    */
   private getCycleIds(nodes: Map<string, { cellId: string; dependencies: string[]; dependents: string[] }>): string[] {
     const nonCycle = new Set(this.getNonCycleIds(nodes));
@@ -345,7 +403,7 @@ export class ComputeService {
   }
 
   /**
-   * Topological sort for a subset of nodes (filtered by allowedIds).
+   * 对节点子集进行拓扑排序（按 allowedIds 过滤）。
    */
   private topologicalSortFiltered(
     nodes: Map<string, { cellId: string; dependencies: string[]; dependents: string[] }>,
@@ -384,8 +442,8 @@ export class ComputeService {
   }
 
   /**
-   * Sort cycle cells into a reasonable computation order.
-   * Cells with fewer in-cycle dependencies come first.
+   * 将循环单元格排序为合理的计算顺序。
+   * 循环内依赖更少的单元格排在前面。
    */
   private sortCycleCells(
     cycleIds: string[],
@@ -400,20 +458,19 @@ export class ComputeService {
   }
 
   /**
-   * Evaluate derived parameters.
+   * 计算派生参数。
    *
-   * Parameters without a `formula` use their `defaultValue` directly.
-   * Parameters with a `formula` are computed in topological order,
-   * referencing only other parameter values (ctx.参数 or bare identifier).
+   * 没有 `formula` 的参数直接使用其 `defaultValue`。
+   * 有 `formula` 的参数按拓扑顺序计算，
+   * 仅引用其他参数值（ctx.参数 或裸标识符）。
    */
   private evaluateDerivedParameters(parameters: ParameterDefinition[]): Map<string, unknown> {
     const values = new Map<string, unknown>();
     const paramMap = new Map(parameters.map(p => [p.id, p]));
 
-    // Simple topological sort for parameter-only DAG
+    // 简单的参数 DAG 拓扑排序
     const inDegree = new Map<string, number>();
     const deps = new Map<string, string[]>(); // paramId -> [depParamId, ...]
-
     for (const p of parameters) {
       inDegree.set(p.id, 0);
       deps.set(p.id, []);
@@ -426,7 +483,7 @@ export class ComputeService {
       );
       deps.set(p.id, depIds);
       inDegree.set(p.id, depIds.length);
-      // Update dependent counts
+      // 更新被依赖者的入度计数
       for (const depId of depIds) {
         if (!inDegree.has(depId)) inDegree.set(depId, 0);
       }
@@ -458,7 +515,7 @@ export class ComputeService {
         }
       }
 
-      // Decrement dependents' in-degree
+      // 减少依赖者的入度
       for (const [pid, paramDeps] of deps) {
         if (paramDeps.includes(id)) {
           const newDeg = (inDegree.get(pid) || 0) - 1;
@@ -470,7 +527,7 @@ export class ComputeService {
       }
     }
 
-    // Fallback: any parameter not topologically reachable gets its default
+    // 兜底：任何拓扑上不可达的参数使用其默认值
     for (const p of parameters) {
       if (!values.has(p.id)) {
         values.set(p.id, p.defaultValue);
@@ -481,12 +538,12 @@ export class ComputeService {
   }
 
   /**
-   * Extract parameter dependencies from a formula.
-   * Supports:
-   *   - ctx.全局参数.名称 ref
-   *   - ctx.全局参数.父.子 ref (按 display path 或 code path)
-   *   - bare param id/name refs
-   * Only returns IDs of other parameters.
+   * 从公式中提取参数依赖。
+   * 支持：
+   *   - ctx.全局参数.名称 引用
+   *   - ctx.全局参数.父.子 引用（按显示路径或编码路径）
+   *   - 裸参数 ID/名称引用
+   * 仅返回其他参数的 ID。
    */
   private extractParamDepsFromFormula(
     formula: string,
@@ -494,9 +551,9 @@ export class ComputeService {
   ): string[] {
     const paramIdSet = new Set(parameters.map(p => p.id));
     const paramNameToId = new Map(parameters.map(p => [p.name, p.id]));
-    // Build code -> id lookup for hierarchical code refs
+    // 构建编码 -> ID 查找表，用于层级编码引用
     const codeToId = new Map(parameters.map(p => [p.code, p.id]).filter(([c]) => c) as [string, string][]);
-    // Build code -> full path mapping for parameter refs by path
+    // 构建编码 -> 完整路径映射，用于按路径引用参数
     const paramCodeToPath = this.buildParamPathMap(parameters);
     const pathToId = new Map<string, string>();
     for (const [code, path] of paramCodeToPath.entries()) {
@@ -515,21 +572,21 @@ export class ComputeService {
               deps.add(node.field);
             } else if (node.table === '全局参数') {
               const parts = (node.field as string).split('.');
-              // Try full path match first
+              // 优先尝试完整路径匹配
               const path = '全局参数.' + node.field;
               const byPath = pathToId.get(path);
               if (byPath) {
                 deps.add(byPath);
                 break;
               }
-              // Try leaf code match
+              // 尝试叶子编码匹配
               const leafCode = parts[parts.length - 1];
               const byCode = codeToId.get(leafCode);
               if (byCode) {
                 deps.add(byCode);
                 break;
               }
-              // Try leaf name match
+              // 尝试叶子名称匹配
               const leafName = parts[parts.length - 1];
               const byName = paramNameToId.get(leafName);
               if (byName) deps.add(byName);
@@ -556,14 +613,14 @@ export class ComputeService {
       }
       visit(ast);
     } catch {
-      // parse failed → no deps
+      // 解析失败 → 无依赖
     }
     return Array.from(deps);
   }
 
   /**
-   * Build parameter code -> full display path map.
-   * E.g. code "1.2" → "全局参数.总投资.建设投资"
+   * 构建参数编码 -> 完整显示路径的映射。
+   * 例如编码 "1.2" → "全局参数.总投资.建设投资"
    */
   private buildParamPathMap(parameters: ParameterDefinition[]): Map<string, string> {
     const codeToName = new Map(parameters.map(p => [p.code, p.name]).filter(([c]) => c) as [string, string][]);
@@ -576,7 +633,7 @@ export class ComputeService {
       while (curCode) {
         parts.unshift(codeToName.get(curCode) ?? curCode);
         curCode = codeToParentId.get(curCode) ?? null;
-        // If parentId is a cell id rather than code, stop
+        // 如果 parentId 是单元格 ID 而非编码，停止
         if (curCode && !codeToName.has(curCode)) break;
       }
       result.set(p.code, '全局参数.' + parts.join('.'));
@@ -589,12 +646,12 @@ export class ComputeService {
     cellMap: Map<string, ModelDefinition['cells'][number]>,
     paramValues: Map<string, unknown>,
     paramMap: Map<string, ParameterDefinition>,
-    resultRepo: ResultRepository,
-    _targetCellId: string,
+    memResults: Map<string, Map<number, number | null>>,
     modelId: string,
     tableNameToId: Map<string, string>,
     constructionCols: number,
-    parameters: ParameterDefinition[]
+    parameters: ParameterDefinition[],
+    maxTime: number
   ) {
     const ctx: any = {
       t,
@@ -607,20 +664,22 @@ export class ComputeService {
     ctx.getById = (id: string, timeIdx?: number) => {
       const idx = timeIdx ?? t;
 
-      // Check if it's a parameter
+      // 检查是否为参数
       if (paramMap.has(id)) {
         const val = paramValues.get(id);
         return val !== undefined ? val : 0;
       }
 
-      // Check if it's a cell
+      // 检查是否为单元格
       const cell = cellMap.get(id);
       if (!cell) return '#REF!';
 
       if (!this.isInScope(cell.scope, idx, constructionCols)) return 0;
-      const results = resultRepo.findByCell(id);
-      const found = results.find(r => r.timeIndex === idx && r.modelId === modelId);
-      if (found) return found.value;
+
+      const cellResults = memResults.get(id);
+      if (cellResults) {
+        if (cellResults.has(idx)) return cellResults.get(idx);
+      }
       const dv = cell.defaultValue ?? 0;
       if (Array.isArray(dv) && idx >= 0 && idx < dv.length) return dv[idx];
       if (Array.isArray(dv)) return 0;
@@ -635,25 +694,32 @@ export class ComputeService {
 
       const cell = cellMap.get(id);
       if (!cell) return [];
-      const results = resultRepo.findByCell(id);
-      return results
-        .filter(r => this.isInScope(cell.scope, r.timeIndex, constructionCols))
-        .map(r => r.value)
-        .filter(v => v !== null);
+
+      const cellResults = memResults.get(id);
+      if (!cellResults) return [];
+      const arr: number[] = [];
+      for (let ti = 0; ti <= maxTime; ti++) {
+        if (!this.isInScope(cell.scope, ti, constructionCols)) continue;
+        if (cellResults.has(ti)) {
+          const v = cellResults.get(ti);
+          if (v !== null) arr.push(v);
+        }
+      }
+      return arr;
     };
 
     ctx.getCell = (tableRef: string, field: string, timeIdx?: number) => {
       if (tableRef === '全局参数') {
-        // Hierarchical path resolution for parameters
+        // 参数的层级路径解析
         const parts = field.split('.');
-        // Try full path match backwards
+        // 反向尝试完整路径匹配
         let resolvedId: string | undefined;
         for (let i = parts.length; i >= 1; i--) {
           const pathCode = parts.slice(parts.length - i).join('.');
           resolvedId = codeToId.get(pathCode);
           if (resolvedId) break;
         }
-        // Fallback: match by name
+        // 兜底：按名称匹配
         if (!resolvedId) {
           for (const p of parameters) {
             if (p.name === field || (parts.length > 0 && p.name === parts[parts.length - 1])) {
@@ -665,20 +731,19 @@ export class ComputeService {
         if (resolvedId && paramValues.has(resolvedId)) {
           return paramValues.get(resolvedId);
         }
-        // Legacy name fallback via ctx.全局参数 name map
+        // 通过 ctx.全局参数 名称映射的旧版兜底
         return ctx.全局参数[field] ?? 0;
       }
-      // Resolve table name -> table ID
+      // 解析表名 -> 表 ID
       const resolvedTableId = tableNameToId.get(tableRef) ?? tableRef;
       const idx = timeIdx ?? t;
 
-      // Phase 1: match by stable code (preferred)
+      // 阶段 1：按稳定编码匹配（首选）
       for (const [, cell] of cellMap) {
         if (cell.tableId === resolvedTableId && cell.code === field) {
           if (!this.isInScope(cell.scope, idx, constructionCols)) return 0;
-          const results = resultRepo.findByCell(cell.id);
-          const found = results.find(r => r.timeIndex === idx && r.modelId === modelId);
-          if (found) return found.value;
+          const cellResults = memResults.get(cell.id);
+          if (cellResults && cellResults.has(idx)) return cellResults.get(idx);
           const dv = cell.defaultValue ?? 0;
           if (Array.isArray(dv) && idx >= 0 && idx < dv.length) return dv[idx];
           if (Array.isArray(dv)) return 0;
@@ -686,13 +751,12 @@ export class ComputeService {
         }
       }
 
-      // Phase 2: fallback match by name (legacy compat)
+      // 阶段 2：按名称兜底匹配（旧版兼容）
       for (const [, cell] of cellMap) {
         if (cell.tableId === resolvedTableId && cell.name === field) {
           if (!this.isInScope(cell.scope, idx, constructionCols)) return 0;
-          const results = resultRepo.findByCell(cell.id);
-          const found = results.find(r => r.timeIndex === idx && r.modelId === modelId);
-          if (found) return found.value;
+          const cellResults = memResults.get(cell.id);
+          if (cellResults && cellResults.has(idx)) return cellResults.get(idx);
           const dv = cell.defaultValue ?? 0;
           if (Array.isArray(dv) && idx >= 0 && idx < dv.length) return dv[idx];
           if (Array.isArray(dv)) return 0;
@@ -704,7 +768,7 @@ export class ComputeService {
 
     ctx.getCellArray = (tableRef: string, field: string) => {
       if (tableRef === '全局参数') {
-        // Hierarchical path resolution for parameters
+        // 参数的层级路径解析
         const parts = field.split('.');
         let resolvedId: string | undefined;
         for (let i = parts.length; i >= 1; i--) {
@@ -729,40 +793,50 @@ export class ComputeService {
       }
       const resolvedTableId = tableNameToId.get(tableRef) ?? tableRef;
 
-      // Phase 1: match by stable code
+      // 阶段 1：按稳定编码匹配
       for (const [, cell] of cellMap) {
         if (cell.tableId === resolvedTableId && cell.code === field) {
-          const results = resultRepo.findByCell(cell.id);
-          return results
-            .filter(r => this.isInScope(cell.scope, r.timeIndex, constructionCols))
-            .map(r => r.value)
-            .filter(v => v !== null);
+          const cellResults = memResults.get(cell.id);
+          if (!cellResults) return [];
+          const arr: number[] = [];
+          for (let ti = 0; ti <= maxTime; ti++) {
+            if (!this.isInScope(cell.scope, ti, constructionCols)) continue;
+            if (cellResults.has(ti)) {
+              const v = cellResults.get(ti);
+              if (v !== null) arr.push(v);
+            }
+          }
+          return arr;
         }
       }
-      // Phase 2: fallback match by name
+      // 阶段 2：按名称兜底匹配
       for (const [, cell] of cellMap) {
         if (cell.tableId === resolvedTableId && cell.name === field) {
-          const results = resultRepo.findByCell(cell.id);
-          return results
-            .filter(r => this.isInScope(cell.scope, r.timeIndex, constructionCols))
-            .map(r => r.value)
-            .filter(v => v !== null);
+          const cellResults = memResults.get(cell.id);
+          if (!cellResults) return [];
+          const arr: number[] = [];
+          for (let ti = 0; ti <= maxTime; ti++) {
+            if (!this.isInScope(cell.scope, ti, constructionCols)) continue;
+            if (cellResults.has(ti)) {
+              const v = cellResults.get(ti);
+              if (v !== null) arr.push(v);
+            }
+          }
+          return arr;
         }
       }
       return [];
     };
 
-    // Direct cell-id references
+    // 直接单元格 ID 引用（向后兼容）
     for (const [id, cell] of cellMap) {
-      if (id === _targetCellId) continue;
       if (!this.isInScope(cell.scope, t, constructionCols)) {
         ctx[id] = 0;
         continue;
       }
-      const results = resultRepo.findByCell(id);
-      const found = results.find(r => r.timeIndex === t && r.modelId === modelId);
-      if (found) {
-        ctx[id] = found.value;
+      const cellResults = memResults.get(id);
+      if (cellResults && cellResults.has(t)) {
+        ctx[id] = cellResults.get(t);
       } else {
         const dv = cell.defaultValue ?? 0;
         if (Array.isArray(dv) && t < dv.length) {
@@ -775,11 +849,11 @@ export class ComputeService {
       }
     }
 
-    // Parameter values: expose by id, name, and hierarchical paths
+    // 参数值：按 ID、名称和层级路径暴露
     const paramNs: Record<string, unknown> = {};
     const paramPathValueMap = this.buildParamValueMap(parameters, paramValues);
     for (const [path, value] of paramPathValueMap.entries()) {
-      // Set nested object structure: 全局参数.总投资.建设投资
+      // 设置嵌套对象结构：全局参数.总投资.建设投资
       const parts = path.split('.');
       let cur = paramNs;
       for (let i = 0; i < parts.length - 1; i++) {
@@ -788,7 +862,7 @@ export class ComputeService {
       }
       cur[parts[parts.length - 1]] = value;
     }
-    // Also expose flat name entries for backward compat
+    // 同时暴露扁平名称条目以保持向后兼容
     for (const [id, value] of paramValues) {
       ctx[id] = value;
       const paramDef = paramMap.get(id);
@@ -800,7 +874,7 @@ export class ComputeService {
   }
 
   /**
-   * Build flat path -> value map for parameters (e.g. "总投资.建设投资" -> 100)
+   * 构建参数的扁平路径 -> 值映射（例如 "总投资.建设投资" -> 100）
    */
   private buildParamValueMap(
     parameters: ParameterDefinition[],
@@ -816,7 +890,7 @@ export class ComputeService {
       let curCode: string | null = p.code;
       while (curCode) {
         parts.unshift(codeToName.get(curCode) ?? curCode);
-        // parentId could be cell ID or code; if it's not a code, stop
+        // parentId 可能是单元格 ID 或编码；如果不是编码则停止
         const parentId = codeToParentId.get(curCode);
         if (parentId && codeToName.has(parentId)) {
           curCode = parentId;
@@ -831,8 +905,8 @@ export class ComputeService {
   }
 
   /**
-   * Build VM context for parameter evaluation.
-   * Exposes ctx.全局参数 namespace with hierarchical paths, bare param ids, and names.
+   * 构建参数计算的 VM 上下文。
+   * 暴露 ctx.全局参数 命名空间（含层级路径）、裸参数 ID 和名称。
    */
   private buildParamContext(
     evaluatedValues: Map<string, unknown>,
@@ -913,9 +987,9 @@ export class ComputeService {
   }
 
   /**
-   * Resolve a table+field reference to a cell ID.
-   * Used by DAG dependency extraction to map formula references to cell IDs.
-   * Mirrors the lookup logic in getCell(): code-first, then name fallback.
+   * 将表+字段引用解析为单元格 ID。
+   * DAG 依赖提取时用于将公式引用映射到单元格 ID。
+   * 与 getCell() 的查找逻辑一致：编码优先，名称兜底。
    */
   private resolveCellId(
     table: string,
@@ -927,14 +1001,14 @@ export class ComputeService {
 
     const resolvedTableId = tableNameToId.get(table) ?? table;
 
-    // Phase 1: match by code
+    // 阶段 1：按编码匹配
     for (const c of model.cells) {
       if (c.tableId === resolvedTableId && c.code === field) {
         return c.id;
       }
     }
 
-    // Phase 2: match by name
+    // 阶段 2：按名称匹配
     for (const c of model.cells) {
       if (c.tableId === resolvedTableId && c.name === field) {
         return c.id;
@@ -945,8 +1019,8 @@ export class ComputeService {
   }
 
   /**
-   * Topological sort of DAG nodes (after self-loops removed).
-   * Returns null if a real cycle exists (excluding self-references).
+   * DAG 节点的拓扑排序（移除自环后）。
+   * 若存在真正的循环（不含自引用）则返回 null。
    */
   private topologicalSort(nodes: Map<string, { cellId: string; dependencies: string[]; dependents: string[] }>): string[] | null {
     const inDegree = new Map<string, number>();
@@ -981,8 +1055,8 @@ export class ComputeService {
   }
 
   /**
-   * Check if a cell is in scope at a given time index.
-   * Returns true if the cell should be visible/accessible at time t.
+   * 检查单元格在给定时间索引是否在作用域内。
+   * 若单元格在时间 t 应可见/可访问则返回 true。
    */
   private isInScope(
     scope: ModelDefinition['cells'][number]['scope'],

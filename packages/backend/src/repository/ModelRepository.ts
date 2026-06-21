@@ -2,18 +2,16 @@ import Database from 'better-sqlite3';
 import { ModelDefinition, TableDefinition, CellDefinition, ParameterDefinition, ComputeMode, ValueType } from '@economic/core';
 
 /**
- * ModelRepository provides CRUD operations for model definitions.
+ * ModelRepository 提供模型定义的增删改查操作。
  *
- * Strategy:
- *  - The full ModelDefinition is stored as JSON in the `models` row for
- *    fast round-trip save/load.
- *  - Individual components (tables, cells, parameters) are also written
- *    to their respective relational tables for future querying.
+ * 策略：
+ *  - 完整的 ModelDefinition 以 JSON 存储在 `models` 行中，便于快速读写。
+ *  - 各组件（表、单元格、参数）同时写入对应的关系表，以支持未来查询。
  */
 export class ModelRepository {
   constructor(private db: Database.Database) {}
 
-  /** Insert a complete model definition. */
+  /** 插入完整的模型定义。 */
   create(model: ModelDefinition): void {
     const now = new Date().toISOString();
 
@@ -33,7 +31,7 @@ export class ModelRepository {
         now
       );
 
-    // Tables
+    // 表
     for (const table of model.tables) {
       this.db
         .prepare(
@@ -43,7 +41,7 @@ export class ModelRepository {
         .run(table.id, model.id, table.name, table.order, table.description ?? null);
     }
 
-    // Cells
+    // 单元格
     for (const cell of model.cells) {
       this.db
         .prepare(
@@ -64,14 +62,14 @@ export class ModelRepository {
           cell.unit ?? null,
           cell.description ?? null,
           cell.defaultValue !== undefined ? JSON.stringify(cell.defaultValue) : null,
-          1, // Force isArray = true — all cells are timeline arrays
+          1, // 强制 isArray = true — 所有单元格都是时间线数组
           cell.scope ?? 'both',
           cell.precision ?? null,
           cell.useGrouping === false ? 0 : null
         );
-    }
+     }
 
-    // Parameters
+     // 参数
     for (const param of model.parameters) {
       this.db
         .prepare(
@@ -100,7 +98,7 @@ export class ModelRepository {
     }
   }
 
-  /** Retrieve a full model by ID, including all tables, cells, and parameters. */
+  /** 根据 ID 获取完整模型，包括所有表、单元格和参数。 */
   findById(id: string): ModelDefinition | null {
     const row = this.db
       .prepare('SELECT * FROM models WHERE id = ?')
@@ -120,14 +118,14 @@ export class ModelRepository {
     };
   }
 
-  /** List all models (lightweight: no cells/tables). */
+  /** 列出所有模型（轻量：不含单元格/表）。 */
   findAll(): Array<{ id: string; name: string; version: string; description: string | null }> {
     return this.db
       .prepare('SELECT id, name, version, description FROM models ORDER BY created_at DESC')
       .all() as Array<{ id: string; name: string; version: string; description: string | null }>;
   }
 
-  /** Partial update of model metadata. */
+  /** 部分更新模型元数据。 */
   update(id: string, changes: Partial<Pick<ModelDefinition, 'name' | 'version' | 'description'>>): void {
     const sets: string[] = [];
     const values: unknown[] = [];
@@ -144,15 +142,32 @@ export class ModelRepository {
       .run(...values);
   }
 
-  /** Full replace: delete old tables/cells/params then insert new ones in a transaction. */
+  /** 全量替换：在事务中删除旧的表/单元格/参数后插入新的。 */
   updateFull(model: ModelDefinition): void {
+    // 校验并修正孤儿 parentId：若子参数 parentId 指向不存在的参数，则提升为顶层
+    const paramIds = new Set(model.parameters.map((p) => p.id));
+    const correctedParams = model.parameters.map((p) => {
+      if (p.parentId && !paramIds.has(p.parentId)) {
+        return { ...p, parentId: null };
+      }
+      return p;
+    });
+    // 修正单元格 parentId（同逻辑）
+    const cellIds = new Set(model.cells.map((c) => c.id));
+    const correctedCells = model.cells.map((c) => {
+      if (c.parentId && !cellIds.has(c.parentId)) {
+        return { ...c, parentId: null };
+      }
+      return c;
+    });
+
     this.db.transaction(() => {
-      // Delete existing components
+      // 删除已有组件
       this.db.prepare('DELETE FROM tables WHERE model_id = ?').run(model.id);
       this.db.prepare('DELETE FROM cells WHERE model_id = ?').run(model.id);
       this.db.prepare('DELETE FROM parameters WHERE model_id = ?').run(model.id);
 
-      // Re-insert tables
+      // 重新插入表
       const insertTable = this.db.prepare(
         `INSERT INTO tables (id, model_id, name, display_order, description) VALUES (?, ?, ?, ?, ?)`
       );
@@ -160,11 +175,11 @@ export class ModelRepository {
         insertTable.run(table.id, model.id, table.name, table.order, table.description ?? null);
       }
 
-      // Re-insert cells
+      // 重新插入单元格
       const insertCell = this.db.prepare(
         `INSERT INTO cells (id, table_id, model_id, name, code, parent_id, sort_order, formula, cell_type, value_type, unit, description, default_value, is_array, scope, precision, use_grouping) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       );
-      for (const cell of model.cells) {
+      for (const cell of correctedCells) {
         insertCell.run(
           cell.id,
           cell.tableId,
@@ -179,18 +194,18 @@ export class ModelRepository {
           cell.unit ?? null,
           cell.description ?? null,
           cell.defaultValue !== undefined ? JSON.stringify(cell.defaultValue) : null,
-          1, // Force isArray = true — all cells are timeline arrays
+          1, // 强制 isArray = true — 所有单元格都是时间线数组
           cell.scope ?? 'both',
           cell.precision ?? null,
           cell.useGrouping === false ? 0 : null
         );
       }
 
-      // Re-insert parameters
+      // 重新插入参数
       const insertParam = this.db.prepare(
         `INSERT INTO parameters (id, model_id, name, code, parent_id, sort_order, param_type, compute_mode, default_value, formula, min_value, max_value, unit, description, options_json, precision, use_grouping) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       );
-      for (const param of model.parameters) {
+      for (const param of correctedParams) {
         insertParam.run(
           param.id,
           model.id,
@@ -213,13 +228,13 @@ export class ModelRepository {
       }
     })();
 
-    // Update root model row
+    // 更新根模型行
     this.update(model.id, { 
       name: model.name, 
       version: model.version, 
       description: model.description 
     });
-    // Also update timeline and metadata JSON which are NOT handled by this.update()
+    // 同时更新 timeline 和 metadata JSON，这些不由 this.update() 处理
     this.db.prepare(
       'UPDATE models SET timeline_json = ?, metadata_json = ?, updated_at = ? WHERE id = ?'
     ).run(
@@ -230,13 +245,13 @@ export class ModelRepository {
     );
   }
 
-  /** Delete a model and all its components. */
+  /** 删除模型及其所有组件。 */
   delete(id: string): void {
     this.db.prepare('DELETE FROM models WHERE id = ?').run(id);
-    // Cascade deletes handle the rest
+    // 级联删除会处理其余部分
   }
 
-  /** Get table definitions for a model. */
+  /** 获取模型的表定义。 */
   findTablesByModel(modelId: string): TableDefinition[] {
     const rows = this.db
       .prepare('SELECT * FROM tables WHERE model_id = ? ORDER BY display_order')
@@ -250,7 +265,7 @@ export class ModelRepository {
     }));
   }
 
-  /** Get cell definitions for a model. */
+  /** 获取模型的单元格定义。 */
   findCellsByModel(modelId: string): CellDefinition[] {
     const rows = this.db
       .prepare('SELECT * FROM cells WHERE model_id = ? ORDER BY sort_order, id')
@@ -276,7 +291,7 @@ export class ModelRepository {
     }));
   }
 
-  /** Get parameter definitions for a model. */
+  /** 获取模型的参数定义。 */
   findParametersByModel(modelId: string): ParameterDefinition[] {
     const rows = this.db
       .prepare('SELECT * FROM parameters WHERE model_id = ? ORDER BY sort_order, id')
@@ -304,7 +319,7 @@ export class ModelRepository {
 }
 
 // ---------------------------------------------------------------------------
-// Row types
+// 行类型
 // ---------------------------------------------------------------------------
 
 interface ModelRow {

@@ -25,7 +25,7 @@
     "fastify": "^4.24.0",
     "vm2": "^3.9.19",
     "better-sqlite3": "^9.0.0",
-    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.1/xlsx-0.20.1.tgz"
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "typescript": "^5.3.0",
