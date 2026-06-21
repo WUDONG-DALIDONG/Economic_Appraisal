@@ -1,10 +1,14 @@
 import { ModelDefinition } from '@economic/core';
 
+export type NavPath =
+  | { type: 'parameters' }
+  | { type: 'table'; tableId: string };
+
 export interface WorkspaceState {
   models: Array<{ id: string; name: string }>;
   currentModel: ModelDefinition | null;
   activeTableId: string | null;
-  activeWorkspaceTab: 'basic' | 'table' | 'result';
+  navigationPath: NavPath;
   isLoading: boolean;
   error: string | null;
   computeResult: { cellCount: number; durationMs: number; errors: any[]; results: Array<{ cellId: string; timeIndex: number; value: number | null }>; paramValues?: Array<{ paramId: string; value: unknown }> } | null;
@@ -16,7 +20,7 @@ export type WorkspaceAction =
   | { type: 'SELECT_MODEL'; model: ModelDefinition; activeTableId: string | null }
   | { type: 'UPDATE_MODEL'; model: ModelDefinition }
   | { type: 'SET_ACTIVE_TABLE'; tableId: string }
-  | { type: 'SET_ACTIVE_TAB'; tab: 'basic' | 'table' | 'result' }
+  | { type: 'SET_NAVIGATION_PATH'; path: NavPath }
   | { type: 'SET_LOADING'; isLoading: boolean }
   | { type: 'SET_ERROR'; error: string | null }
   | { type: 'SET_COMPUTE_RESULT'; result: { cellCount: number; durationMs: number; errors: any[] } | null }
@@ -28,7 +32,7 @@ export const initialState: WorkspaceState = {
   models: [],
   currentModel: null,
   activeTableId: null,
-  activeWorkspaceTab: 'basic',
+  navigationPath: { type: 'parameters' },
   isLoading: false,
   error: null,
   computeResult: null,
@@ -44,6 +48,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         ...state,
         currentModel: action.model,
         activeTableId: action.activeTableId,
+        navigationPath: { type: 'parameters' },
         error: null,
         computeResult: null,
       };
@@ -51,8 +56,8 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
       return { ...state, currentModel: action.model };
     case 'SET_ACTIVE_TABLE':
       return { ...state, activeTableId: action.tableId };
-    case 'SET_ACTIVE_TAB':
-      return { ...state, activeWorkspaceTab: action.tab };
+    case 'SET_NAVIGATION_PATH':
+      return { ...state, navigationPath: action.path };
     case 'SET_LOADING':
       return { ...state, isLoading: action.isLoading };
     case 'SET_ERROR':
@@ -68,6 +73,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         ...state,
         currentModel: null,
         activeTableId: null,
+        navigationPath: { type: 'parameters' },
         computeResult: null,
       };
     default:

@@ -26,12 +26,11 @@ describe('App', () => {
     vi.restoreAllMocks();
   });
 
-  it('renders model list panel', async () => {
+  it('renders model tree nav with model names', async () => {
     render(<App />);
     await waitFor(() => {
-      expect(screen.getByText('模型列表')).toBeDefined();
+      expect(screen.getByText('光储项目财务模型')).toBeDefined();
     });
-    expect(screen.getByText('光储项目财务模型')).toBeDefined();
     expect(screen.getByText('数据中心模型')).toBeDefined();
   });
 
@@ -45,7 +44,7 @@ describe('App', () => {
   it('renders new model button', async () => {
     render(<App />);
     await waitFor(() => {
-      expect(screen.getByText('+ 新建')).toBeDefined();
+      expect(screen.getByText('+ 新建模型')).toBeDefined();
     });
   });
 });

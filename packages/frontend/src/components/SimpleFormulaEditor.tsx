@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ModelDefinition } from '@economic/core';
+import { ModelDefinition, normalizeFullwidth } from '@economic/core';
 import { useTheme } from '../ThemeContext.js';
 
 interface SimpleFormulaEditorProps {
@@ -36,7 +36,7 @@ export const SimpleFormulaEditor: React.FC<SimpleFormulaEditorProps> = ({
     <div style={{ position: 'relative' }}>
       <input
         value={value}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(e) => onChange(normalizeFullwidth(e.target.value))}
         onFocus={() => setExpanded(true)}
         onBlur={() => {
           setTimeout(() => setExpanded(false), 150);
@@ -102,7 +102,7 @@ function getSuggestions(
 
   const token = getLastToken(trimmed);
   if (!token) {
-    if (trimmed.endsWith('=') || /[+\-*/(),\s]$/.test(trimmed)) {
+  if (trimmed.endsWith('=') || /[+\-*/(),\s]$/.test(trimmed)) {
       const out = model.tables.map((t) => ({
         label: t.name,
         detail: '表',
@@ -149,7 +149,7 @@ function getLastToken(text: string): { token: string; start: number; end: number
   if (i < 0) return null;
 
   let start = i;
-  while (start >= 0 && /[\w\u4e00-\u9fff.]/.test(text[start])) {
+  while (start >= 0 && /[\w\u4e00-\u9fff.()]/.test(text[start])) {
     start--;
   }
 

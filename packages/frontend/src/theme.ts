@@ -43,6 +43,7 @@ export interface Theme {
   badgeNoValueBg: string;
   badgeNoValueText: string;
   inputFocusBorder: string;
+  rowSelectedBg: string;
 }
 
 export const lightTheme: Theme = {
@@ -90,6 +91,7 @@ export const lightTheme: Theme = {
   badgeNoValueBg: '#f5f5f5',
   badgeNoValueText: '#999',
   inputFocusBorder: '#1976d2',
+  rowSelectedBg: '#bbdefb',
 };
 
 export const darkTheme: Theme = {
@@ -137,4 +139,5 @@ export const darkTheme: Theme = {
   badgeNoValueBg: '#2c2c2c',
   badgeNoValueText: '#787878',
   inputFocusBorder: '#426eff',
+  rowSelectedBg: '#2a3d66',
 };

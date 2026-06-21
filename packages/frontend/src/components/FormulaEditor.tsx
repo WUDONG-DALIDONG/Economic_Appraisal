@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, useImperativeHandle, forwardRef } from 'react';
-import { ModelDefinition, formulaIdToDisplay, formulaDisplayToId } from '@economic/core';
+import { ModelDefinition, formulaIdToDisplay, formulaDisplayToId, normalizeFullwidth } from '@economic/core';
 import { useTheme } from '../ThemeContext.js';
 
 interface FormulaEditorProps {
@@ -57,7 +57,8 @@ export const FormulaEditor = forwardRef<FormulaEditorRef, FormulaEditorProps>(({
     try {
       const idFormula = formulaDisplayToId(displayValue, model);
       if (idFormula !== value) onChange(idFormula);
-    } catch {
+    } catch (e: any) {
+      console.warn('[FormulaEditor] formulaDisplayToId failed:', e.message, '| display=', displayValue);
     }
   }, [displayValue, model, onChange, value]);
 
@@ -67,7 +68,7 @@ export const FormulaEditor = forwardRef<FormulaEditorRef, FormulaEditorProps>(({
     const info = getLastTablePrefix(displayValue);
     let suffix: string;
     if (mode === 'expand') {
-      suffix = '.';
+      suffix = s.displayInsert.endsWith('.') ? '' : '.';
     } else if (s.isParameter) {
       suffix = '';
     } else if (s.refId === currentCellId) {
@@ -124,14 +125,14 @@ export const FormulaEditor = forwardRef<FormulaEditorRef, FormulaEditorProps>(({
             fontWeight: 600,
             cursor: 'pointer',
             userSelect: 'none',
-            background: value ? theme.bgPrimaryLight : theme.badgeNoValueBg,
-            color: value ? theme.accent : theme.badgeNoValueText,
+            background: theme.bgPrimaryLight,
+            color: theme.accent,
             border: '1px solid',
-            borderColor: value ? theme.badgeBorder : theme.badgeNoValueBorder,
+            borderColor: theme.badgeBorder,
             minWidth: 32,
           }}
         >
-          {value ? 'ƒ =' : '−'}
+          ƒ =
         </div>
       </div>
     );
@@ -143,7 +144,7 @@ export const FormulaEditor = forwardRef<FormulaEditorRef, FormulaEditorProps>(({
         ref={inputRef}
         autoFocus
         value={displayValue}
-        onChange={(e) => setDisplayValue(e.target.value)}
+        onChange={(e) => setDisplayValue(normalizeFullwidth(e.target.value))}
         onFocus={() => setExpanded(true)}
         onBlur={() => {
           setTimeout(() => {
@@ -220,7 +221,7 @@ export const FormulaEditor = forwardRef<FormulaEditorRef, FormulaEditorProps>(({
   );
 });
 
-/* ---------- Helpers ---------- */
+/* ---------- 辅助函数 ---------- */
 
 interface Suggestion {
   label: string;
@@ -294,7 +295,7 @@ function cellToSuggestion(
   const fullPath = idMaps.cellIdToPath.get(cell.id) ?? cell.name;
   const hasChildren = model.cells.some((child: any) => child.parentId === cell.id);
   return {
-    label: fullPath,
+    label: (cell.code ? cell.code + ' ' : '') + fullPath,
     detail: hasChildren ? '▶' : '',
     displayInsert: fullPath,
     isLeaf: !hasChildren,
@@ -309,7 +310,7 @@ function paramToSuggestion(
 ): Suggestion {
   const hasChildren = model.parameters.some((p: any) => p.parentId === param.id);
   return {
-    label: param.name,
+    label: (param.code ? param.code + ' ' : '') + param.name,
     detail: hasChildren ? '▶' : '',
     displayInsert: displayPath,
     isLeaf: !hasChildren,
@@ -328,19 +329,29 @@ function getSuggestions(
   const trimmed = (text || '').trimEnd();
   if (!trimmed) return [];
 
+  // 构建有效的参数ID集合，用于校验 parentId 有效性
+  const validParamIds = new Set<string>(model.parameters.map((p: any) => p.id));
+
+  // 辅助函数：判断是否为顶层参数（无 parentId 或 parentId 指向不存在的参数）
+  const isTopLevelParam = (p: any) => !p.parentId || !validParamIds.has(p.parentId);
+
   const prefix = getLastTablePrefix(trimmed);
   if (!prefix) {
     const lastChar = trimmed.slice(-1);
     if (lastChar === '=' || lastChar === '' || /[+\-*/(),\s]/.test(lastChar)) {
-      const result: Suggestion[] = [];
-      if (scope !== 'parameters-only') {
-        result.push(...model.tables.map((t) => ({
-          label: t.name,
-          detail: '表 ▶',
-          displayInsert: t.name + '.',
-          isLeaf: false,
-        })));
+      if (scope === 'parameters-only') {
+        // 全局参数模式：直接展示一级参数，跳过"全局参数 ▶"中间步骤
+        return model.parameters
+          .filter((p: any) => isTopLevelParam(p))
+          .map((p: any) => paramToSuggestion(p, '全局参数.' + p.name, model));
       }
+      const result: Suggestion[] = [];
+      result.push(...model.tables.map((t) => ({
+        label: t.name,
+        detail: '表 ▶',
+        displayInsert: t.name + '.',
+        isLeaf: false,
+      })));
       result.push({ label: '全局参数', detail: '全局参数 ▶', displayInsert: '全局参数.', isLeaf: false });
       return result;
     }
@@ -350,7 +361,7 @@ function getSuggestions(
   const path = prefix.path;
 
   if (path === '全局参数') {
-    const topLevel = model.parameters.filter((p: any) => !p.parentId);
+    const topLevel = model.parameters.filter((p: any) => isTopLevelParam(p));
     return topLevel.map((p: any) =>
       paramToSuggestion(p, '全局参数.' + p.name, model)
     );
@@ -360,7 +371,7 @@ function getSuggestions(
   if (path.startsWith(paramPrefix)) {
     const segments = path.slice(paramPrefix.length).split('.');
     let matchedParam: any;
-    let currentCandidates = model.parameters.filter((p: any) => !p.parentId);
+    let currentCandidates = model.parameters.filter((p: any) => isTopLevelParam(p));
     for (const seg of segments) {
       matchedParam = currentCandidates.find((p: any) => p.name === seg);
       if (!matchedParam) break;
@@ -378,7 +389,7 @@ function getSuggestions(
     if (segments.length > 0) {
       const lastSeg = segments[segments.length - 1];
       const candidates = model.parameters.filter(
-        (p: any) => !p.parentId && p.name.startsWith(lastSeg)
+        (p: any) => isTopLevelParam(p) && p.name.startsWith(lastSeg)
       );
       if (candidates.length > 0) {
         return candidates.map((p: any) =>
@@ -439,7 +450,7 @@ function getLastTablePrefix(text: string): { path: string; start: number; end: n
   i--;
   let start = i;
 
-  while (start >= 0 && /[\w\u4e00-\u9fff.]/.test(text[start])) {
+  while (start >= 0 && /[\w\u4e00-\u9fff.()（）：: ]/.test(text[start])) {
     start--;
   }
 

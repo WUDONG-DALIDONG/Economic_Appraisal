@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { TableDefinition, ComputeMode, ValueType } from '@economic/core';
+import { TableDefinition, ComputeMode, ValueType, normalizeFullwidth } from '@economic/core';
 import { useTheme } from '../ThemeContext.js';
 
 interface TableNavigatorProps {
@@ -120,7 +120,7 @@ export const TableNavigator: React.FC<TableNavigatorProps> = ({
             <input
               autoFocus
               value={t.name}
-              onChange={(e) => onRename(t.id, e.target.value)}
+              onChange={(e) => onRename(t.id, normalizeFullwidth(e.target.value))}
               onBlur={() => setEditingId(null)}
               onKeyDown={(e) => e.key === 'Enter' && setEditingId(null)}
               style={{ width: 100, padding: '2px 4px', fontSize: 12 }}
