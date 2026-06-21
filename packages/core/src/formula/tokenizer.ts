@@ -1,8 +1,12 @@
 import { TokenType, Token } from './interface';
+import { normalizeFullwidth } from '../utils/normalizeFullwidth';
 
 export { TokenType, type Token } from './interface';
 
 export function tokenize(formula: string): Token[] {
+  // 自动将全角字符替换为半角，避免 Unexpected character 错误
+  formula = normalizeFullwidth(formula);
+
   const tokens: Token[] = [];
   let pos = 0;
 
@@ -24,7 +28,7 @@ export function tokenize(formula: string): Token[] {
 
     const start = pos;
 
-    // Multi-character operators first (== , !=, >=, <=)
+    // 先处理多字符运算符（==, !=, >=, <=）
     if (char === '=' && formula[pos + 1] === '=') {
       addToken(TokenType.Operator, '==', start); pos += 2; continue;
     }
@@ -38,7 +42,7 @@ export function tokenize(formula: string): Token[] {
       addToken(TokenType.Operator, '<=', start); pos += 2; continue;
     }
 
-    // Single character punctuation
+    // 单字符标点
     if ('+-/^%(),.:;[]'.includes(char)) {
       const tokType =
         char === '(' ? TokenType.LParen :
@@ -55,14 +59,14 @@ export function tokenize(formula: string): Token[] {
       continue;
     }
 
-    // Comparison operators without = second char
+    // 不带 = 后缀的比较运算符
     if (char === '>' || char === '<') {
       addToken(TokenType.Operator, char, start);
       advance();
       continue;
     }
 
-    // Number
+    // 数字
     if (/\d/.test(char)) {
       while (/\d/.test(peek())) advance();
       if (peek() === '.') {
@@ -73,48 +77,48 @@ export function tokenize(formula: string): Token[] {
       continue;
     }
 
-    // ID reference: @{cellId} or @{paramId}
+    // ID 引用: @{cellId} 或 @{paramId}
     if (char === '@' && formula[pos + 1] === '{') {
       const start = pos;
-      pos += 2; // skip @{
+      pos += 2; // 跳过 @{
       const idStart = pos;
       while (pos < formula.length && formula[pos] !== '}') {
         pos++;
       }
       if (pos >= formula.length) throw new Error(`Unterminated @{id} reference at position ${start}`);
       const id = formula.slice(idStart, pos);
-      pos++; // skip }
+      pos++; // 跳过 }
       addToken(TokenType.IdRef, id, start);
       continue;
     }
 
-    // String literal
+    // 字符串字面量
     if (char === '"') {
-      advance(); // consume opening quote
+      advance(); // 消费开引号
       while (!isAtEnd() && peek() !== '"') {
         advance();
       }
       if (isAtEnd()) throw new Error(`Unterminated string at position ${start}`);
-      advance(); // consume closing quote
+      advance(); // 消费闭引号
       addToken(TokenType.String, formula.slice(start + 1, pos - 1), start);
       continue;
     }
 
-    // Wildcard temporarily (will be reclassified in post-processing)
+    // 通配符（临时，将在后处理中重新分类）
     if (char === '*') {
       addToken(TokenType.Wildcard, '*', start);
       advance();
       continue;
     }
 
-    // Equal sign
+    // 等号
     if (char === '=') {
       addToken(TokenType.Operator, '=', start);
       advance();
       continue;
     }
 
-    // Identifier / Table / Field name (includes Chinese characters)
+    // 标识符 / 表名 / 字段名（包含中文字符）
     if (/[a-zA-Z_\u4e00-\u9fa5]/.test(char)) {
       while (!isAtEnd() && /[a-zA-Z0-9_\u4e00-\u9fa5]/.test(peek())) {
         advance();
@@ -126,9 +130,9 @@ export function tokenize(formula: string): Token[] {
     throw new Error(`Unexpected character '${char}' at position ${pos}`);
   }
 
-  // =================== Post-processing ===================
+  // =================== 后处理 ===================
 
-  // Step 1: * inside [...] -> Wildcard; otherwise -> Operator
+  // 步骤 1: [...] 内的 * -> 通配符；否则 -> 运算符
   for (let i = 0; i < tokens.length; i++) {
     if (tokens[i].type === TokenType.Wildcard) {
       let bracketDepth = 0;
@@ -142,7 +146,7 @@ export function tokenize(formula: string): Token[] {
     }
   }
 
-  // Step 2: preceded by . -> Field name
+  // 步骤 2: 前面是 . 的标识符 -> 字段名
   for (let i = 0; i < tokens.length; i++) {
     if (tokens[i].type === TokenType.Identifier) {
       const prev = tokens[i - 1];
@@ -152,7 +156,7 @@ export function tokenize(formula: string): Token[] {
     }
   }
 
-  // Step 2b: preceded by . -> Field name (for Numbers used as cell codes like 表4.1)
+  // 步骤 2b: 前面是 . 的数字 -> 字段名（用于表码引用，如 表4.1）
   for (let i = 0; i < tokens.length; i++) {
     if (tokens[i].type === TokenType.Number) {
       const prev = tokens[i - 1];
@@ -162,8 +166,8 @@ export function tokenize(formula: string): Token[] {
     }
   }
 
-  // Step 2c: merge consecutive Field.Dot.Number/Field into single Field
-  // e.g. "3.2" + "." + "2" -> "3.2.2" (supports multi-level codes like 1.2.3.4)
+  // 步骤 2c: 合并连续的 Field.Dot.Number/Field 为单个 Field
+  // 例如 "3.2" + "." + "2" -> "3.2.2"（支持多层编码如 1.2.3.4）
   {
     const merged: Token[] = [];
     let i = 0;
@@ -190,8 +194,8 @@ export function tokenize(formula: string): Token[] {
     tokens.push(...merged);
   }
 
-  // Step 3: followed by . -> Table name
-  //          or followed by [ and not preceded by . -> Table name
+  // 步骤 3: 后面跟着 . 的标识符 -> 表名
+  //          或后面跟着 [ 且前面不是 . 的标识符 -> 表名
   for (let i = 0; i < tokens.length; i++) {
     if (tokens[i].type === TokenType.Identifier) {
       const next = tokens[i + 1];
@@ -206,7 +210,7 @@ export function tokenize(formula: string): Token[] {
     }
   }
 
-  // Step 4: true, false -> Boolean
+  // 步骤 4: true、false -> 布尔值
   for (let i = 0; i < tokens.length; i++) {
     if (tokens[i].type === TokenType.Identifier) {
       const val = tokens[i].value;

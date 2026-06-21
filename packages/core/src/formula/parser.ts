@@ -54,15 +54,15 @@ class Parser {
   parseRestAsScript(): { language: string; code: string } {
     const lang = this.expect(TokenType.Identifier).value;
     this.expect(TokenType.Colon);
-    // Collect remaining tokens
+    // 收集剩余的 token
     const parts: string[] = [];
     while (this.peek().type !== TokenType.EOF) {
-      // Check if there was whitespace between this and previous token
+      // 检查此 token 与前一个 token 之间是否有空白
       if (parts.length > 0) {
         const prevEnd = this.tokens[this.pos - 1].pos + this.tokens[this.pos - 1].value.length;
         const currStart = this.tokens[this.pos].pos;
         if (currStart > prevEnd) {
-          parts.push(' '); // Reconstruct whitespace as space
+          parts.push(' '); // 将空白重构为空格
         }
       }
       parts.push(this.tokens[this.pos++].value);
@@ -70,12 +70,12 @@ class Parser {
     return { language: lang, code: parts.join('') };
   }
 
-  // expression → equality
+  // expression → 相等性比较
   private expression(): ASTNode {
     return this.equality();
   }
 
-  // equality → comparison (("==" | "!=") comparison)*
+  // 相等性 → 比较 (("==" | "!=") 比较)*
   private equality(): ASTNode {
     let node = this.comparison();
     while (true) {
@@ -85,7 +85,7 @@ class Parser {
           const right = this.comparison();
           node = { type: ASTNodeType.BinaryOp, operator: op as any, left: node, right };
         } else {
-          // Put it back - not our operator
+          // 回退 - 不是当前层级的运算符
           this.pos--;
           break;
         }
@@ -96,7 +96,7 @@ class Parser {
     return node;
   }
 
-  // comparison → addition ((">" | "<" | ">=" | "<=") addition)*
+  // 比较 → 加法 ((">" | "<" | ">=" | "<=") 加法)*
   private comparison(): ASTNode {
     let node = this.addition();
     while (true) {
@@ -116,7 +116,7 @@ class Parser {
     return node;
   }
 
-  // addition → multiplication (("+" | "-") multiplication)*
+  // 加法 → 乘法 (("+" | "-") 乘法)*
   private addition(): ASTNode {
     let node = this.multiplication();
     while (true) {
@@ -136,7 +136,7 @@ class Parser {
     return node;
   }
 
-  // multiplication → exponentiation (("*" | "/" | "%") exponentiation)*
+  // 乘法 → 幂运算 (("*" | "/" | "%") 幂运算)*
   private multiplication(): ASTNode {
     let node = this.exponentiation();
     while (true) {
@@ -156,7 +156,7 @@ class Parser {
     return node;
   }
 
-  // exponentiation → unary ("^" unary)?
+  // 幂运算 → 一元 ("^" 一元)?
   private exponentiation(): ASTNode {
     let node = this.unary();
     if (this.match(TokenType.Operator)) {
@@ -171,7 +171,7 @@ class Parser {
     return node;
   }
 
-  // unary → ("+" | "-") unary | primary
+  // 一元 → ("+" | "-") 一元 | 基本表达式
   private unary(): ASTNode {
     if (this.match(TokenType.Operator)) {
       const op = this.tokens[this.pos - 1].value;
@@ -184,7 +184,7 @@ class Parser {
     return this.primary();
   }
 
-  // primary → NUMBER | STRING | BOOLEAN | IDENTIFIER | cellRef | functionCall | "(" expression ")"
+  // 基本表达式 → NUMBER | STRING | BOOLEAN | IDENTIFIER | 单元格引用 | 函数调用 | "(" expression ")"
   private primary(): ASTNode {
     const token = this.peek();
 
@@ -262,11 +262,11 @@ class Parser {
     }
 
     if (token.type === TokenType.Table) {
-      // Table might be followed by [ (terse syntax without .Field)
-      // or by .Field (full syntax)
+      // Table 后面可能跟着 [（简写语法，不带 .Field）
+      // 或者 .Field（完整语法）
       const next = this.tokens[this.pos + 1];
       if (next && next.type === TokenType.LBracket) {
-        // Terse syntax: 表1[t] or 发电量[t]
+        // 简写语法: 表1[t] 或 发电量[t]
         const table = this.advance().value;
         this.advance(); // consume [
         const bracketTokens: Token[] = [];
@@ -278,7 +278,7 @@ class Parser {
         return {
           type: ASTNodeType.CellRef,
           table,
-          field: 'value', // default field for terse syntax
+          field: 'value', // 简写语法的默认字段
           timeShift: 0,
           timeRange: null,
           timeExpression: timeExpr,
@@ -287,15 +287,15 @@ class Parser {
       return this.cellRef();
     }
 
-    // Check for script block: identifier: ...
+    // 检查脚本块: identifier: ...
     if (token.type === TokenType.Identifier) {
       const next = this.tokens[this.pos + 1];
       if (next && next.type === TokenType.Colon) {
-        // Script block
+        // 脚本块
         const { language, code } = this.parseRestAsScript();
         return { type: ASTNodeType.ScriptBlock, language: language as 'javascript', code };
       }
-      // Could be function call or bare identifier
+      // 可能是函数调用或裸标识符
       const after = this.tokens[this.pos + 1];
       if (after && after.type === TokenType.LParen) {
         return this.functionCall();
@@ -314,7 +314,7 @@ class Parser {
     throw new ParseError(`Unexpected token ${token.type}: ${token.value}`, token.pos);
   }
 
-  // cellRef → Table DOT Field ( "[" timeAccessor "]" )?
+  // 单元格引用 → Table DOT Field ( "[" 时间访问器 "]" )?
   private cellRef(): ASTNode {
     const table = this.expect(TokenType.Table).value;
     this.expect(TokenType.Dot);
@@ -344,7 +344,7 @@ class Parser {
         bracketContent.push(this.advance());
       }
 
-      // Parse bracket content
+      // 解析方括号内容
       if (bracketContent.length === 1) {
         const content = bracketContent[0];
         if (content.type === TokenType.Wildcard) {
@@ -352,11 +352,11 @@ class Parser {
         } else if (content.type === TokenType.Number) {
           timeRange = { start: parseFloat(content.value), end: parseFloat(content.value) };
         } else {
-          // Could be expression like "t", "t-1" etc.
+          // 可能是表达式，如 "t"、"t-1" 等
           timeExpression = parseBracketTokens(bracketContent);
         }
       } else if (bracketContent.length === 3) {
-        // e.g. "1:5"
+        // 如 "1:5"
         if (bracketContent[0].type === TokenType.Number &&
             bracketContent[1].value === ':' &&
             bracketContent[2].type === TokenType.Number) {
@@ -382,7 +382,7 @@ class Parser {
     };
   }
 
-  // functionCall → IDENTIFIER "(" (expression ("," expression)*)? ")"
+  // 函数调用 → IDENTIFIER "(" (expression ("," expression)*)? ")"
   private functionCall(): ASTNode {
     const name = this.expect(TokenType.Identifier).value;
     this.expect(TokenType.LParen);
@@ -402,7 +402,7 @@ class Parser {
   }
 }
 
-// Helper to parse bracket content using a sub-parser
+// 辅助函数：使用子解析器解析方括号内容
 function parseBracketTokens(tokens: Token[]): ASTNode {
   const parser = new Parser(tokens);
   return parser.expression();
@@ -410,14 +410,14 @@ function parseBracketTokens(tokens: Token[]): ASTNode {
 
 export function parse(formula: string): ASTNode {
   const tokens = tokenize(formula);
-  // Skip leading = if present
+  // 跳过前导的 =（如果存在）
   let startIdx = 0;
   if (tokens.length > 0 && tokens[0].type === TokenType.Operator && tokens[0].value === '=') {
     startIdx = 1;
   }
   const parser = new Parser(tokens, startIdx);
   const ast = parser.parse();
-  // Check for trailing tokens
+  // 检查尾部是否有多余 token
   const remaining = parser.getRemainingTokens();
   if (remaining.length > 0) {
     const t = remaining[0];

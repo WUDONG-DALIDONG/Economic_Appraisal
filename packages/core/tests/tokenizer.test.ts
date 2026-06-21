@@ -202,3 +202,43 @@ describe('Tokenizer - token positions', () => {
     expect(tokens[2].pos).toBe(5);
   });
 });
+
+describe('Tokenizer - 全角字符规范化', () => {
+  it('tokenizes fullwidth parentheses as halfwidth', () => {
+    const tokens = tokenize('ＰＭＴ（０．０３６）');
+    expect(tokens.map(t => t.value)).toEqual(['PMT', '(', '0.036', ')']);
+  });
+
+  it('tokenizes fullwidth numbers', () => {
+    const tokens = tokenize('１＋２＝３');
+    expect(tokens.map(t => t.value)).toEqual(['1', '+', '2', '=', '3']);
+  });
+
+  it('tokenizes fullwidth letters', () => {
+    const tokens = tokenize('ＡＢＳ（－５）');
+    expect(tokens.map(t => t.value)).toEqual(['ABS', '(', '-', '5', ')']);
+  });
+
+  it('preserves string literals with fullwidth chars', () => {
+    const tokens = tokenize('="全角文字"');
+    expect(tokens).toHaveLength(2);
+    expect(tokens[0]).toMatchObject({ type: TokenType.Operator, value: '=' });
+    expect(tokens[1]).toMatchObject({ type: TokenType.String, value: '全角文字' });
+  });
+
+  it('tokenizes mixed fullwidth formula with string literal', () => {
+    const tokens = tokenize('ＩＦ（１＞０，"是"，"否"）');
+    expect(tokens.map(t => t.value)).toEqual(['IF', '(', '1', '>', '0', ',', '是', ',', '否', ')']);
+  });
+
+  it('normalizes fullwidth parentheses to halfwidth in formulas', () => {
+    // 全角括号应被转换为半角，并由 tokenizer 正常识别为分隔符
+    const tokens = tokenize('表名.指标（全角）');
+    expect(tokens.map(t => t.value)).toEqual(['表名', '.', '指标', '(', '全角', ')']);
+    // 验证转换成了半宽括号
+    const parenTokens = tokens.filter(t => t.value === '(' || t.value === ')');
+    expect(parenTokens).toHaveLength(2);
+    expect(parenTokens[0].value).toBe('(');
+    expect(parenTokens[1].value).toBe(')');
+  });
+});

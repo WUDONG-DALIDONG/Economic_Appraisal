@@ -162,6 +162,43 @@ export function IF(condition: CellValue, trueValue: CellValue, falseValue: CellV
 }
 
 /**
+ * SUM - Sum of values
+ * Supports variable arguments and nested array flattening
+ */
+export function SUM(...args: CellValue[]): CellValue {
+  return args.flat(Infinity).reduce((acc: number, v) => acc + (typeof v === 'number' ? v : 0), 0);
+}
+
+/**
+ * ABS - Absolute value
+ */
+export function ABS(x: CellValue): CellValue {
+  return typeof x === 'number' ? Math.abs(x) : null;
+}
+
+/**
+ * MAX - Maximum of values
+ * Supports variable arguments and nested array flattening
+ */
+export function MAX(...args: CellValue[]): CellValue {
+  const nums = args.flat(Infinity).map(v => typeof v === 'number' ? v : -Infinity);
+  if (nums.length === 0) return null;
+  const result = Math.max(...nums);
+  return result === -Infinity ? null : result;
+}
+
+/**
+ * MIN - Minimum of values
+ * Supports variable arguments and nested array flattening
+ */
+export function MIN(...args: CellValue[]): CellValue {
+  const nums = args.flat(Infinity).map(v => typeof v === 'number' ? v : Infinity);
+  if (nums.length === 0) return null;
+  const result = Math.min(...nums);
+  return result === Infinity ? null : result;
+}
+
+/**
  * Registry of all financial functions for the interpreter
  */
 export const financialFunctions: Record<string, (...args: CellValue[]) => CellValue> = {
@@ -172,4 +209,8 @@ export const financialFunctions: Record<string, (...args: CellValue[]) => CellVa
   PAYBACK,
   POWER,
   IF,
+  SUM,
+  ABS,
+  MAX,
+  MIN,
 };

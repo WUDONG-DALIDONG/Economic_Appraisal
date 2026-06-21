@@ -6,16 +6,16 @@ import {
 } from '@economic/core';
 
 /**
- * Compiles an AST (Abstract Syntax Tree) into JavaScript code strings.
+ * 将 AST（抽象语法树）编译为 JavaScript 代码字符串。
  *
- * The generated code uses a `ctx` runtime object with these APIs:
- * - ctx.t: current time index (relative year)
- * - ctx.getCell(table, field, timeIndex): retrieve a single cell value
- * - ctx.getCellArray(table, field): retrieve all time-period values for a cell
- * - ctx.functions[name](args...): invoke financial/helper functions
+ * 生成的代码使用 `ctx` 运行时对象，提供以下 API：
+ * - ctx.t: 当前时间索引（相对年份）
+ * - ctx.getCell(table, field, timeIndex): 获取单个单元格的值
+ * - ctx.getCellArray(table, field): 获取单元格所有时间周期的值
+ * - ctx.functions[name](args...): 调用财务/辅助函数
  *
- * This ensures frontend interpreter and backend compiler produce identical
- * results given the same runtime context.
+ * 这确保了前端解释器和后端编译器在相同的运行时上下文中
+ * 产生一致的结果。
  */
 export class ASTCompiler {
   compile(node: ASTNode): string {
@@ -58,7 +58,7 @@ export class ASTCompiler {
     if (name === 't') {
       return 'ctx.t';
     }
-    // Other identifiers reference runtime variables on ctx
+    // 其他标识符引用 ctx 上的运行时变量
     return `ctx.${name}`;
   }
 

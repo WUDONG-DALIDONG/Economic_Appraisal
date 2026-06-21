@@ -1,5 +1,5 @@
 /**
- * Extract cell dependencies from an AST formula.
+ * 从 AST 公式中提取单元格依赖。
  */
 import { ASTNode, ASTNodeType } from '../types';
 import { parse } from '../formula/parser';
@@ -12,7 +12,7 @@ export function collectDependencies(
   formula: string,
   context: ResolveContext
 ): string[] {
-  // For script blocks, do best-effort regex extraction
+  // 对于脚本块，尽力使用正则提取
   if (formula.startsWith('javascript:')) {
     return extractScriptDependencies(formula, context);
   }

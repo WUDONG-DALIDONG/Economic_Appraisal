@@ -7,6 +7,10 @@ import {
   PAYBACK,
   POWER,
   IF,
+  SUM,
+  ABS,
+  MAX,
+  MIN,
   financialFunctions,
 } from '../src/formula/financialFunctions';
 
@@ -133,6 +137,67 @@ describe('Financial Functions - IF', () => {
   });
 });
 
+describe('Financial Functions - SUM', () => {
+  it('sums numbers', () => {
+    expect(SUM(1, 2, 3)).toBe(6);
+  });
+
+  it('sums with nested arrays', () => {
+    expect(SUM([1, 2], [3, 4])).toBe(10);
+  });
+
+  it('ignores non-number values', () => {
+    expect(SUM(1, null, 2, 'abc', 3)).toBe(6);
+  });
+
+  it('returns 0 for no args', () => {
+    expect(SUM()).toBe(0);
+  });
+});
+
+describe('Financial Functions - ABS', () => {
+  it('returns absolute value of positive number', () => {
+    expect(ABS(5)).toBe(5);
+  });
+
+  it('returns absolute value of negative number', () => {
+    expect(ABS(-5)).toBe(5);
+  });
+
+  it('returns null for non-number', () => {
+    expect(ABS('abc')).toBeNull();
+    expect(ABS(null)).toBeNull();
+  });
+});
+
+describe('Financial Functions - MAX', () => {
+  it('finds maximum of numbers', () => {
+    expect(MAX(1, 5, 3)).toBe(5);
+  });
+
+  it('finds maximum with nested arrays', () => {
+    expect(MAX([1, 2], [5, 3])).toBe(5);
+  });
+
+  it('returns null for no args', () => {
+    expect(MAX()).toBeNull();
+  });
+});
+
+describe('Financial Functions - MIN', () => {
+  it('finds minimum of numbers', () => {
+    expect(MIN(1, 5, 3)).toBe(1);
+  });
+
+  it('finds minimum with nested arrays', () => {
+    expect(MIN([1, 2], [5, 3])).toBe(1);
+  });
+
+  it('returns null for no args', () => {
+    expect(MIN()).toBeNull();
+  });
+});
+
 describe('Financial Functions - registry', () => {
   it('exports all functions in registry', () => {
     expect(Object.keys(financialFunctions)).toContain('PMT');
@@ -142,6 +207,10 @@ describe('Financial Functions - registry', () => {
     expect(Object.keys(financialFunctions)).toContain('POWER');
     expect(Object.keys(financialFunctions)).toContain('IF');
     expect(Object.keys(financialFunctions)).toContain('PAYBACK');
+    expect(Object.keys(financialFunctions)).toContain('SUM');
+    expect(Object.keys(financialFunctions)).toContain('ABS');
+    expect(Object.keys(financialFunctions)).toContain('MAX');
+    expect(Object.keys(financialFunctions)).toContain('MIN');
   });
 });
 

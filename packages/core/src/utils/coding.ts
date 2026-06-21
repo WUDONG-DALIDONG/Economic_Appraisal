@@ -1,15 +1,14 @@
 /**
- * Hierarchical indicator code system.
+ * 层级指标编码体系。
  *
- * Principle:
- * - Cell codes are dot-separated integers (x.y.z)
- * - Top-level cells: 1, 2, 3...
- * - First child of 1: 1.1, 1.2, 1.3...
- * - Child of 1.2: 1.2.1, 1.2.2...
+ * 原则：
+ * - 单元格编码为点分隔整数（x.y.z）
+ * - 顶层单元格：1, 2, 3...
+ * - 1 的第一个子级：1.1, 1.2, 1.3...
+ * - 1.2 的子级：1.2.1, 1.2.2...
  *
- * Codes are dynamic: after any structural change (add/remove/indent/outdent),
- * recomputeCodes() rebuilds all codes from scratch based on parentId relationships
- * and sortOrder.
+ * 编码是动态的：任何结构变更（添加/删除/缩进/反缩进）后，
+ * recomputeCodes() 会根据 parentId 关系和 sortOrder 从头重建所有编码。
  */
 
 export interface CodingInput {
@@ -19,15 +18,15 @@ export interface CodingInput {
 }
 
 /**
- * Recompute all hierarchical codes for a flat list of cells.
+ * 重新计算扁平单元格列表的所有层级编码。
  *
- * Algorithm:
- * 1. Group cells by parentId
- * 2. Sort each group by sortOrder
- * 3. Assign top-level codes to root cells (parentId == null): 1, 2, 3...
- * 4. Recursively assign child codes: parentCode + '.' + childIndex
+ * 算法：
+ * 1. 按 parentId 分组
+ * 2. 每组按 sortOrder 排序
+ * 3. 为根单元格（parentId == null）分配顶层编码：1, 2, 3...
+ * 4. 递归分配子级编码：parentCode + '.' + childIndex
  *
- * Returns a map of cellId -> newCode
+ * @returns 单元格 ID -> 新编码的映射
  */
 export function recomputeCodes<T extends CodingInput>(cells: T[]): Map<string, string> {
   const validIds = new Set(cells.map(c => c.id));
@@ -66,20 +65,20 @@ export function recomputeCodes<T extends CodingInput>(cells: T[]): Map<string, s
 }
 
 /**
- * Get the depth level of a code (number of dot-separated segments).
- * e.g., "1" -> 1, "1.2" -> 2, "1.2.3" -> 3
+ * 获取编码的深度层级（点分隔段数）。
+ * 例如，"1" -> 1, "1.2" -> 2, "1.2.3" -> 3
  */
 export function getCodeDepth(code: string): number {
   return code.split('.').length;
 }
 
 /**
- * Generate a parent summary formula from child codes.
+ * 从子级编码生成父级汇总公式。
  *
- * For a parent cell with children, generates SUM() of all child cells:
- *   children with codes [1.1, 1.2, 1.3] -> "SUM(1.1, 1.2, 1.3)"
+ * 对于有子级的父单元格，生成所有子单元格的 SUM()：
+ *   编码为 [1.1, 1.2, 1.3] 的子级 -> "SUM(1.1, 1.2, 1.3)"
  *
- * This is an initial proposal; user can edit afterwards.
+ * 这是初始建议，用户可随后编辑。
  */
 export function generateSummaryFormula(childCodes: string[]): string {
   if (childCodes.length === 0) return '';
@@ -87,22 +86,22 @@ export function generateSummaryFormula(childCodes: string[]): string {
 }
 
 /**
- * Build parent-child relationships from a flat sorted list.
+ * 从扁平排序列表构建父子关系。
  *
- * Given a list of cells in display order, indent (increase depth) or
- * outdent (decrease depth) a cell by adjusting its parentId.
+ * 给定按显示顺序排列的单元格列表，通过调整 parentId 来缩进（增加深度）或
+ * 反缩进（减少深度）某个单元格。
  *
- * @param cells  flat list in display order, each with { id, parentId, sortOrder }
- * @param targetId  id of the cell to re-parent
- * @param delta     +1 = indent (become child of previous sibling), -1 = outdent
- * @returns         new list with updated parentId(s)
+ * @param cells   按显示顺序的扁平列表，每项包含 { id, parentId, sortOrder }
+ * @param targetId 要重新设置父级的单元格 ID
+ * @param delta      +1 = 缩进（成为前一个兄弟的子级），-1 = 反缩进
+ * @returns          更新了 parentId 的新列表
  */
 export function adjustIndentation<T extends CodingInput>(
   cells: T[],
   targetId: string,
   delta: number
 ): T[] {
-  // Create a working copy
+  // 创建工作副本
   const copy = cells.map((c, idx) => ({ ...c, _index: idx })) as Array<
     T & { _index: number }
   >;
@@ -113,15 +112,15 @@ export function adjustIndentation<T extends CodingInput>(
   const target = copy[targetIndex];
 
   if (delta > 0) {
-    // Indent: become child of the previous sibling at the same depth
-    // Find previous cell that is at same depth or shallower
+    // 缩进：成为同深度前一个兄弟的子级
+    // 查找前面同深度或更浅的单元格
     for (let i = targetIndex - 1; i >= 0; i--) {
       const candidate = copy[i];
       if (
         candidate.parentId === target.parentId ||
         (target.parentId !== null && candidate.id === target.parentId)
       ) {
-        // Previous sibling or parent: target becomes child of candidate
+        // 前一个兄弟或父级：目标成为候选的子级
         target.parentId = candidate.id;
         break;
       }
@@ -131,9 +130,9 @@ export function adjustIndentation<T extends CodingInput>(
       }
     }
   } else if (delta < 0) {
-    // Outdent: move up one level
+    // 反缩进：上移一级
     if (target.parentId !== null) {
-      // Find the parent cell
+      // 查找父级单元格
       const parent = copy.find((c) => c.id === target.parentId);
       if (parent) {
         target.parentId = parent.parentId;
@@ -143,18 +142,18 @@ export function adjustIndentation<T extends CodingInput>(
     }
   }
 
-  // Recalculate sortOrder based on new display order (parent depth-first)
+  // 基于新的显示顺序（父级深度优先）重新计算 sortOrder
   return recalcSortOrder(copy.map(({ _index, ...rest }) => rest as T));
 }
 
 /**
- * Recalculate sortOrder so cells are ordered depth-first with correct parent grouping.
+ * 重新计算 sortOrder，使单元格按深度优先顺序排列且父级分组正确。
  *
- * After structural changes (indent/outdent), sortOrder must reflect the new
- * display order for recomputeCodes() to work correctly.
+ * 结构变更（缩进/反缩进）后，sortOrder 必须反映新的显示顺序，
+ * recomputeCodes() 才能正确工作。
  */
 function recalcSortOrder<T extends CodingInput>(cells: T[]): T[] {
-  // Build parent -> children
+  // 构建父级 -> 子级映射
   const parentToChildren = new Map<string | null, T[]>();
   for (const cell of cells) {
     const parentId = cell.parentId ?? null;
@@ -164,7 +163,7 @@ function recalcSortOrder<T extends CodingInput>(cells: T[]): T[] {
     parentToChildren.get(parentId)!.push(cell);
   }
 
-  // Sort each group by existing sortOrder to preserve relative order within group
+  // 每组按现有 sortOrder 排序，保持组内相对顺序
   for (const [, children] of parentToChildren) {
     children.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
   }

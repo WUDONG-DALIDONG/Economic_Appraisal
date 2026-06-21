@@ -1,4 +1,5 @@
 import { CellDefinition, ParameterDefinition } from '../types';
+import { normalizeFullwidth } from './normalizeFullwidth';
 
 function buildCellIdMaps(
   cells: CellDefinition[],
@@ -18,7 +19,7 @@ function buildCellIdMaps(
     while (curId) {
       const cc = idToCell.get(curId);
       if (!cc) break;
-      parts.unshift(cc.name);
+      parts.unshift((cc.name || '').trim());
       curId = cc.parentId ?? null;
     }
     idToPath.set(c.id, `${tblName}.${parts.join('.')}`);
@@ -42,7 +43,7 @@ function buildParamIdMaps(parameters: ParameterDefinition[]) {
     while (curId) {
       const pp = idToParam.get(curId);
       if (!pp) break;
-      parts.unshift(pp.name);
+      parts.unshift((pp.name || '').trim());
       curId = pp.parentId ?? null;
     }
     idToPath.set(p.id, `全局参数.${parts.join('.')}`);
@@ -88,9 +89,26 @@ export function formulaDisplayToId(
     parameters: ParameterDefinition[];
   }
 ): string {
+  // 将公式中的全角字符先规范化，确保路径匹配和 tokenize 一致
+  displayFormula = normalizeFullwidth(displayFormula);
+
   if (!displayFormula) return displayFormula;
-  const { pathToId: cellPathToId } = buildCellIdMaps(model.cells, model.tables);
-  const { pathToId: paramPathToId } = buildParamIdMaps(model.parameters);
+  const { pathToId: cellPathToId, idToPath: cellIdToPath } = buildCellIdMaps(model.cells, model.tables);
+  const { pathToId: paramPathToId, idToPath: paramIdToPath } = buildParamIdMaps(model.parameters);
+
+  // 构建叶子名称 -> ID 列表的映射，用于模糊匹配
+  const cellLeafNameToIds = new Map<string, string[]>();
+  for (const [id, path] of cellIdToPath.entries()) {
+    const leaf = path.split('.').pop()!;
+    if (!cellLeafNameToIds.has(leaf)) cellLeafNameToIds.set(leaf, []);
+    cellLeafNameToIds.get(leaf)!.push(id);
+  }
+  const paramLeafNameToIds = new Map<string, string[]>();
+  for (const [id, path] of paramIdToPath.entries()) {
+    const leaf = path.split('.').pop()!;
+    if (!paramLeafNameToIds.has(leaf)) paramLeafNameToIds.set(leaf, []);
+    paramLeafNameToIds.get(leaf)!.push(id);
+  }
 
   const tableNames = new Set(model.tables.map(t => t.name));
 
@@ -98,14 +116,14 @@ export function formulaDisplayToId(
   let i = 0;
 
   while (i < displayFormula.length) {
-    if (!/[\w\u4e00-\u9fff]/.test(displayFormula[i])) {
+    if (!/[\w\u4e00-\u9fff（）：:]/.test(displayFormula[i])) {
       result += displayFormula[i];
       i++;
       continue;
     }
 
     let j = i;
-    while (j < displayFormula.length && /[\w\u4e00-\u9fff]/.test(displayFormula[j])) {
+    while (j < displayFormula.length && /[\w\u4e00-\u9fff（）：:]/.test(displayFormula[j])) {
       j++;
     }
     const word1 = displayFormula.slice(i, j);
@@ -116,11 +134,13 @@ export function formulaDisplayToId(
       let bestPath: string | null = null;
       let bestId: string | null = null;
       let bestEnd = restStart - 1;
+      let lastScannedEnd = restStart;
 
       while (k < displayFormula.length) {
-        while (k < displayFormula.length && /[\w\u4e00-\u9fff]/.test(displayFormula[k])) {
+        while (k < displayFormula.length && /[\w\u4e00-\u9fff()（）：:]/.test(displayFormula[k])) {
           k++;
         }
+        lastScannedEnd = k;
         const candidatePath = word1 + '.' + displayFormula.slice(restStart, k);
 
         const cellId = cellPathToId.get(candidatePath);
@@ -142,6 +162,21 @@ export function formulaDisplayToId(
           continue;
         }
         break;
+      }
+
+      if (!bestId) {
+        const leafName = displayFormula.slice(restStart, lastScannedEnd);
+        const paramIds = paramLeafNameToIds.get(leafName);
+        if (paramIds && paramIds.length >= 1) {
+          bestId = paramIds[0];
+          bestEnd = lastScannedEnd;
+        } else {
+          const cellIds = cellLeafNameToIds.get(leafName);
+          if (cellIds && cellIds.length >= 1) {
+            bestId = cellIds[0];
+            bestEnd = lastScannedEnd;
+          }
+        }
       }
 
       if (bestId) {
@@ -166,7 +201,7 @@ export function formulaDisplayToId(
   return result;
 }
 
-// Legacy code-based functions (kept for backward compat during transition)
+// 旧版基于编码的函数（过渡期间保留以兼容）
 
 function buildParamMaps(parameters: ParameterDefinition[]) {
   const codeToName = new Map(parameters.map(p => [p.code, p.name]).filter(([c]) => c) as [string, string][]);
@@ -286,14 +321,14 @@ export function formulaDisplayToCode(
   let i = 0;
 
   while (i < displayFormula.length) {
-    if (!/[\w\u4e00-\u9fff]/.test(displayFormula[i])) {
+    if (!/[\w\u4e00-\u9fff（）：:]/.test(displayFormula[i])) {
       result += displayFormula[i];
       i++;
       continue;
     }
 
     let j = i;
-    while (j < displayFormula.length && /[\w\u4e00-\u9fff]/.test(displayFormula[j])) {
+    while (j < displayFormula.length && /[\w\u4e00-\u9fff（）：:]/.test(displayFormula[j])) {
       j++;
     }
     const word1 = displayFormula.slice(i, j);
@@ -306,7 +341,7 @@ export function formulaDisplayToCode(
 
       let lastSegEnd = restStart;
       while (k < displayFormula.length) {
-        while (k < displayFormula.length && /[\w\u4e00-\u9fff]/.test(displayFormula[k])) {
+        while (k < displayFormula.length && /[\w\u4e00-\u9fff()（）：:]/.test(displayFormula[k])) {
           k++;
         }
         const candidatePath = word1 + '.' + displayFormula.slice(restStart, k);

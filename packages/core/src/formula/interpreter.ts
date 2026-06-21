@@ -1,5 +1,5 @@
 /**
- * AST Interpreter - Evaluates parsed AST nodes
+ * AST 解释器 - 对解析后的 AST 节点求值
  */
 import {
   ASTNode,
@@ -58,7 +58,7 @@ export function evaluate(node: ASTNode, ctx: EvalContext): CellValue {
       }
 
       if (node.timeRange === '*') {
-        // Wildcard: collect all periods
+        // 通配符：收集所有期次
         const allPeriods = ctx.getAllOperationPeriods();
         const results: CellValue[] = [];
         for (const period of allPeriods) {
@@ -75,10 +75,10 @@ export function evaluate(node: ASTNode, ctx: EvalContext): CellValue {
         timeIndex = evaluated;
       } else if (node.timeRange && typeof node.timeRange === 'object') {
         if (node.timeRange.start === node.timeRange.end) {
-          // Single index like [0] or [1]
+          // 单索引，如 [0] 或 [1]
           timeIndex = node.timeRange.start;
         } else {
-          // Range [1:5]
+          // 范围 [1:5]
           const results: CellValue[] = [];
           for (let i = node.timeRange.start; i <= node.timeRange.end; i++) {
             results.push(ctx.getCellValue(node.table, node.field, i));
@@ -135,7 +135,7 @@ export function evaluate(node: ASTNode, ctx: EvalContext): CellValue {
     }
 
     case ASTNodeType.ScriptBlock:
-      // Script blocks are not evaluated by the interpreter
+      // 脚本块不由解释器求值
       return null;
 
     default:

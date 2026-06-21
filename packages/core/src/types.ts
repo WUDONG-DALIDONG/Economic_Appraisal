@@ -1,12 +1,12 @@
 /**
- * Economic Appraisal - Unified Type Definitions
+ * 经济评价 - 统一类型定义
  * 
- * Core types used by both frontend (AST Interpreter) and backend (AST Compiler)
- * to ensure identical computation behavior.
+ * 前端（AST 解释器）和后端（AST 编译器）共用的核心类型，
+ * 以确保两端计算行为一致。
  */
 
 // ============================================================================
-// CellValue - The runtime value type used in cell evaluation
+// CellValue - 单元格求值时使用的运行时值类型
 // ============================================================================
 
 export type CellValue = number | string | boolean | null | CellValue[];
@@ -20,7 +20,7 @@ export function isArrayValue(value: CellValue): value is CellValue[] {
 }
 
 // ============================================================================
-// AST Node Types - Discriminated Union for Formula AST
+// AST 节点类型 - 公式 AST 的可辨识联合类型
 // ============================================================================
 
 export enum ASTNodeType {
@@ -51,9 +51,9 @@ export interface CellRefNode extends ASTNodeBase {
   type: ASTNodeType.CellRef;
   table: string;
   field: string;
-  timeShift: number;        // fixed offset (e.g. -1, 0, 1)
+  timeShift: number;        // 固定偏移量（如 -1, 0, 1）
   timeRange: { start: number; end: number } | '*' | null;
-  timeExpression?: ASTNode | null; // dynamic expression like [t-1]
+  timeExpression?: ASTNode | null; // 动态表达式，如 [t-1]
 }
 
 export interface BinaryOpNode extends ASTNodeBase {
@@ -91,7 +91,7 @@ export type ASTNode =
   | ScriptBlockNode;
 
 // ============================================================================
-// Cell Definition
+// 单元格定义
 // ============================================================================
 
 export enum ComputeMode {
@@ -130,7 +130,7 @@ export interface CellDefinition {
 }
 
 // ============================================================================
-// Table Definition
+// 表定义
 // ============================================================================
 
 export interface TableDefinition {
@@ -141,7 +141,7 @@ export interface TableDefinition {
 }
 
 // ============================================================================
-// Parameter Definition
+// 参数定义
 // ============================================================================
 
 export interface ParameterDefinition {
@@ -164,7 +164,7 @@ export interface ParameterDefinition {
 }
 
 // ============================================================================
-// Model Definition
+// 模型定义
 // ============================================================================
 
 export interface ModelDefinition {
@@ -188,7 +188,7 @@ export interface ModelDefinition {
 }
 
 // ============================================================================
-// Time Context - Passed to interpreters/compilers during cell evaluation
+// 时间上下文 - 在单元格求值时传递给解释器/编译器
 // ============================================================================
 
 export interface TimeContext {
@@ -202,7 +202,7 @@ export interface TimeContext {
 }
 
 // ============================================================================
-// Cell Reference
+// 单元格引用
 // ============================================================================
 
 export interface CellReference {
@@ -212,7 +212,7 @@ export interface CellReference {
 }
 
 // ============================================================================
-// Evaluation Result
+// 求值结果
 // ============================================================================
 
 export interface EvaluationResult {

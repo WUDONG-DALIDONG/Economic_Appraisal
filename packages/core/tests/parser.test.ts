@@ -252,3 +252,29 @@ describe('Parser - 标识符', () => {
     expect(ast.left.name).toBe('pi');
   });
 });
+
+describe('Parser - 全角字符规范化', () => {
+  it('parses fullwidth function call', () => {
+    const ast = parse('=ＰＭＴ（０．０３６，１５）');
+    expect(ast.type).toBe(ASTNodeType.FunctionCall);
+    expect(ast.name).toBe('PMT');
+    expect(ast.args).toHaveLength(2);
+    expect(ast.args[0].value).toBe(0.036);
+    expect(ast.args[1].value).toBe(15);
+  });
+
+  it('parses fullwidth arithmetic expression', () => {
+    const ast = parse('１＋２×３');
+    expect(ast.type).toBe(ASTNodeType.BinaryOp);
+    expect(ast.operator).toBe('+');
+    expect(ast.left.value).toBe(1);
+    expect(ast.right.type).toBe(ASTNodeType.BinaryOp);
+    expect(ast.right.operator).toBe('*');
+  });
+
+  it('parses fullwidth comparison', () => {
+    const ast = parse('５＞＝３');
+    expect(ast.type).toBe(ASTNodeType.BinaryOp);
+    expect(ast.operator).toBe('>=');
+  });
+});

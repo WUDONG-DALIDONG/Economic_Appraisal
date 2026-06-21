@@ -1,12 +1,12 @@
 import { tokenize, Token, TokenType } from './tokenizer';
 
 /**
- * Extract all table.field references from a formula string.
+ * 从公式字符串中提取所有 table.field 引用。
  *
- * Pattern: TokenType.Table + Dot + TokenType.Field
- * Covers both `表名.指标名` and `全局参数.参数名`.
+ * 模式: TokenType.Table + Dot + TokenType.Field
+ * 同时覆盖 `表名.指标名` 和 `全局参数.参数名`。
  *
- * ScriptBlock formulas return an empty array.
+ * ScriptBlock 公式返回空数组。
  */
 export function extractTableReferences(formula: string): Array<{ table: string; field: string }> {
   if (!formula) return [];
@@ -37,14 +37,13 @@ export function extractTableReferences(formula: string): Array<{ table: string; 
 }
 
 /**
- * Rename all table-name references inside `formula`.
+ * 重命名 `formula` 中所有表名引用。
  *
- * Only touches TokenType.Table tokens whose value === `oldName`.
- * All dotted field names (`oldName.指标`) and bracket syntax
- * (`oldName[t]`) are updated.
+ * 仅修改值等于 `oldName` 的 TokenType.Table token。
+ * 所有点分字段名（`oldName.指标`）和方括号语法
+ *（`oldName[t]`）都会被更新。
  *
- * If formula cannot be tokenised the original string is returned
- * unchanged.
+ * 如果公式无法分词，则原样返回原始字符串。
  */
 export function renameTableInFormula(formula: string, oldName: string, newName: string): string {
   if (!formula || !oldName || oldName === newName) return formula;
@@ -52,11 +51,10 @@ export function renameTableInFormula(formula: string, oldName: string, newName: 
 }
 
 /**
- * Rename a specific parameter reference inside `formula`.
+ * 重命名 `formula` 中的特定参数引用。
  *
- * Specifically replaces `全局参数.oldName` with `全局参数.newName`.
- * The namespace (`全局参数`) is preserved, only the field part is
- * rewritten.
+ * 具体来说，将 `全局参数.oldName` 替换为 `全局参数.newName`。
+ * 命名空间（`全局参数`）保持不变，仅重写字段部分。
  */
 export function renameParamInFormula(formula: string, oldName: string, newName: string): string {
   if (!formula || !oldName || oldName === newName) return formula;
@@ -64,7 +62,7 @@ export function renameParamInFormula(formula: string, oldName: string, newName: 
 }
 
 /* ------------------------------------------------------------------ */
-/*  Low-level helpers                                                  */
+/*  底层辅助函数                                                        */
 /* ------------------------------------------------------------------ */
 
 function renameTokenSub(formula: string, oldName: string, newName: string, type: TokenType): string {
@@ -92,9 +90,9 @@ function renameTokenSub(formula: string, oldName: string, newName: string, type:
 }
 
 /**
- * Replace `tableName.fieldName` with `tableName.newFieldName`.
- * Only replaces when the *exact* table-token and field-token pair
- * matches `tableName` + `oldFieldName`.
+ * 将 `tableName.fieldName` 替换为 `tableName.newFieldName`。
+ * 仅当 table token 和 field token 完全匹配
+ * `tableName` + `oldFieldName` 时才替换。
  */
 function renameFieldAfterTable(formula: string, tableName: string, oldFieldName: string, newFieldName: string): string {
   try {
@@ -108,17 +106,17 @@ function renameFieldAfterTable(formula: string, tableName: string, oldFieldName:
       const t = tokens[i];
       if (t.type !== TokenType.Table || t.value !== tableName) continue;
 
-      // Need Dot + Field next
+      // 后面需要 Dot + Field
       if (i + 2 >= tokens.length) continue;
       const dot = tokens[i + 1];
       const f = tokens[i + 2];
       if (!dot || dot.value !== '.' || !f || f.type !== TokenType.Field || f.value !== oldFieldName) continue;
 
-      // Matched — replace the whole `tableName.fieldName` segment
+      // 匹配成功 — 替换整个 `tableName.fieldName` 段
       result += formula.slice(lastPos, t.pos);
       result += tableName + '.' + newFieldName;
       lastPos = f.pos + f.value.length;
-      i += 2; // skip Dot + Field
+      i += 2; // 跳过 Dot + Field
     }
 
     result += formula.slice(lastPos);

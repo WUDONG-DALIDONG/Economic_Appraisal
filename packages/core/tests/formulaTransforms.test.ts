@@ -127,3 +127,35 @@ describe('getCellDisplayPath', () => {
     expect(getCellDisplayPath('1', model)).toBe('资金筹措表.施工进度安排');
   });
 });
+
+import { formulaDisplayToId } from '../src/utils/formulaTransforms';
+
+describe('formulaDisplayToId - 全角字符规范化', () => {
+  it('normalizes fullwidth parentheses in table names', () => {
+    const cells: CellDefinition[] = [
+      { id: 'c1', code: '1', name: '指标(全角)', parentId: null, sortOrder: 0, tableId: 't1', formula: '', type: 'Input', isArray: true, scope: 'both' },
+    ];
+    const tables = [{ id: 't1', name: '表名' }];
+    const m = { cells, tables, parameters: [] };
+    const display = '=表名.指标（全角）';
+    // normalizeFullwidth 将（）→()，然后 formulaDisplayToId 应能匹配 "指标(全角)"
+    expect(formulaDisplayToId(display, m)).toBe('=@{c1}');
+  });
+
+  it('normalizes fullwidth function names and numbers', () => {
+    const cells: CellDefinition[] = [
+      { id: 'c1', code: '1', name: '利率', parentId: null, sortOrder: 0, tableId: 't1', formula: '', type: 'Input', isArray: false, scope: 'both' },
+    ];
+    const tables = [{ id: 't1', name: '表名' }];
+    const m = { cells, tables, parameters: [] };
+    const display = '=ＰＭＴ（表名.利率，１５，１００）';
+    const result = formulaDisplayToId(display, m);
+    expect(result).toBe('=PMT(@{c1},15,100)');
+  });
+
+  it('preserves string literals with fullwidth chars during normalization', () => {
+    const m = { cells: [], tables: [], parameters: [] };
+    const display = '="全角文字"';
+    expect(formulaDisplayToId(display, m)).toBe('="全角文字"');
+  });
+});
