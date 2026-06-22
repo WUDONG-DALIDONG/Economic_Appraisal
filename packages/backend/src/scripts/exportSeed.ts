@@ -23,10 +23,10 @@ db.pragma('journal_mode = WAL');
 const repo = new ModelRepository(db);
 
 const models = repo.findAll();
-const testModel = models.find(m => m.name === '测试模型');
+const testModel = models.find(m => m.name === '测试模型-副本');
 
 if (!testModel) {
-  console.error('Model "测试模型" not found in DB');
+  console.error('Model "测试模型-副本" not found in DB');
   console.log('Available models:', models.map(m => m.name).join(', '));
   process.exit(1);
 }
