@@ -112,6 +112,45 @@ pnpm --filter backend test
 pnpm --filter frontend test
 ```
 
+## 数据管理
+
+### 自动初始化
+
+首次启动后端服务（`pnpm server`）时，若 `data.db` 不存在或为空，系统会自动从 `packages/backend/src/seed.ts` 注入演示模型。
+
+> `data.db` 为 SQLite 二进制文件，已列入 `.gitignore`，**请勿直接提交到版本控制**。
+
+### 导出种子
+
+当你通过前端界面修改了模型数据并保存到 `data.db` 后，需要导出为种子文件以便团队同步：
+
+```bash
+npx tsx packages/backend/src/scripts/exportSeed.ts
+```
+
+这会读取 `data.db` 中的"测试模型-副本"，更新 `packages/backend/src/seed.ts`。随后提交此文件即可：
+
+```bash
+git add packages/backend/src/seed.ts
+git commit -m "data: 更新种子数据"
+git push
+```
+
+### 手动恢复
+
+如果本地 `data.db` 损坏或需要重置：
+
+```bash
+# 删除现有数据库文件
+rm data.db data.db-*
+
+# 重新启动后端，自动从 seed.ts 重建
+pnpm server
+# 控制台会输出：[seed] seeded model ... on fresh file DB
+```
+
+> 生产环境建议定期备份 `data.db` 与 `backups/` 目录。
+
 ## 项目结构
 
 ```
